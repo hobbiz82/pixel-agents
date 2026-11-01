@@ -205,12 +205,15 @@ export interface AgentContextUsage {
 export interface AgentSessionMeta {
   type: 'agentSessionMeta';
   id: number;
-  pid: number;
+  provider?: SessionProvider;
+  pid?: number;
   name?: string;
-  rssBytes: number;
+  rssBytes?: number;
   status?: string;
   statusSince?: number;
 }
+
+export type SessionProvider = 'claude' | 'codex';
 
 export interface LayoutLoaded {
   type: 'layoutLoaded';

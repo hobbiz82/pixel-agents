@@ -1,8 +1,16 @@
-/** mptl fork: Vietnamese labels for a Claude Code session's RAM and idle time. */
+/** mptl fork: Vietnamese labels for a Claude Code / Codex session's RAM and idle time. */
+
+import { CLAUDE_TAG_COLOR, CODEX_TAG_COLOR } from '../constants.js';
 
 export interface SessionStatus {
   status?: string;
   statusSince?: number;
+}
+
+export interface SessionFacts extends SessionStatus {
+  provider?: 'claude' | 'codex';
+  pid?: number;
+  rssBytes?: number;
 }
 
 /** Idle this long or more → the character gets an amber "Rảnh N giờ" badge. */
@@ -43,4 +51,29 @@ export function statusLabel(meta: SessionStatus, now: number): string {
   if (!word) return meta.status;
   if (meta.statusSince === undefined) return word;
   return `${word} ${formatIdle(now - meta.statusSince)}`;
+}
+
+const PROVIDER_TAGS = {
+  claude: { label: 'Claude', color: CLAUDE_TAG_COLOR },
+  codex: { label: 'Codex', color: CODEX_TAG_COLOR },
+} as const;
+
+/** Which tool runs the session; null when the server has not said. */
+export function providerTag(
+  meta: Pick<SessionFacts, 'provider'> | undefined,
+): { label: string; color: string } | null {
+  const tag = meta?.provider ? PROVIDER_TAGS[meta.provider] : undefined;
+  return tag ? { label: tag.label, color: tag.color } : null;
+}
+
+/** Status · RAM · Context · PID, skipping what the session does not have. */
+export function sessionDetail(meta: SessionFacts, now: number, contextPct: number | null): string {
+  return [
+    statusLabel(meta, now),
+    meta.rssBytes !== undefined ? `RAM ${formatRam(meta.rssBytes)}` : null,
+    contextPct !== null ? `Context ${contextPct}%` : null,
+    meta.pid !== undefined ? `PID ${meta.pid}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }

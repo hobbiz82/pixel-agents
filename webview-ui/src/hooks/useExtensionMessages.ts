@@ -845,11 +845,12 @@ export function useExtensionMessages(
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
       } else if (msg.type === 'agentSessionMeta') {
-        // mptl fork: session name, RAM, status
+        // mptl fork: tool (Claude/Codex), session name, RAM, status
         os.setAgentSessionMeta(msg.id as number, {
-          pid: msg.pid as number,
+          provider: msg.provider as 'claude' | 'codex' | undefined,
+          pid: msg.pid as number | undefined,
           name: msg.name as string | undefined,
-          rssBytes: msg.rssBytes as number,
+          rssBytes: msg.rssBytes as number | undefined,
           status: msg.status as string | undefined,
           statusSince: msg.statusSince as number | undefined,
         });

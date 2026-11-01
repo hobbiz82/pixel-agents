@@ -4,7 +4,9 @@
  * Claude Code writes one ~/.claude/sessions/<pid>.json per running session
  * (name, cwd, status idle/busy/waiting, statusUpdatedAt). We read those plus
  * `ps` every few seconds, match on sessionId, and broadcast `agentSessionMeta`
- * when something changed. Read-only: nothing here writes or signals a process.
+ * when something changed. Codex Desktop sessions come from ~/.codex
+ * (codexSessions.ts) and are tagged provider 'codex'.
+ * Read-only: nothing here writes or signals a process.
  */
 import { execFile } from 'node:child_process';
 import { readdir, readFile } from 'node:fs/promises';
@@ -12,6 +14,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { AgentStateStore } from './agentStateStore.js';
+import { type CodexSession, readCodexSessions } from './codexSessions.js';
+import type { LiveSession } from './fileWatcher.js';
 import type { SessionMeta } from './types.js';
 
 export interface SessionRecord {
@@ -88,6 +92,7 @@ export function buildSessionMetas(
   const metas = new Map<string, SessionMeta>();
   for (const [sessionId, rec] of best) {
     metas.set(sessionId, {
+      provider: 'claude',
       pid: rec.pid,
       name: rec.name,
       rssBytes: rss.get(rec.pid) as number,
@@ -107,10 +112,20 @@ export function transcriptPathFor(projectsRoot: string, rec: SessionRecord): str
   return path.join(projectsRoot, rec.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${rec.sessionId}.jsonl`);
 }
 
+/** Codex metas carry what the rollout tells: name and turn status. */
+export function codexMeta(s: CodexSession): SessionMeta {
+  const meta: SessionMeta = { provider: 'codex' };
+  if (s.name !== undefined) meta.name = s.name;
+  if (s.status !== undefined) meta.status = s.status;
+  if (s.statusSince !== undefined) meta.statusSince = s.statusSince;
+  return meta;
+}
+
 export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
   if (!a) return false;
-  if (a.pid !== b.pid || a.name !== b.name) return false;
+  if (a.provider !== b.provider || a.pid !== b.pid || a.name !== b.name) return false;
   if (a.status !== b.status || a.statusSince !== b.statusSince) return false;
+  if (a.rssBytes === undefined || b.rssBytes === undefined) return a.rssBytes === b.rssBytes;
   const base = Math.max(a.rssBytes, 1);
   return Math.abs(b.rssBytes - a.rssBytes) / base < RSS_CHANGE_RATIO;
 }
@@ -118,6 +133,8 @@ export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
 export interface SessionMetaIO {
   readRecords: () => Promise<SessionRecord[]>;
   readPs: () => Promise<string>;
+  /** Codex sessions open recently; absent = Codex not watched. */
+  readCodex?: () => Promise<CodexSession[]>;
 }
 
 export function sessionMetaMessage(id: number, meta: SessionMeta): Record<string, unknown> {
@@ -127,7 +144,7 @@ export function sessionMetaMessage(id: number, meta: SessionMeta): Record<string
 export class SessionMetaPoller {
   private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
-  private live: { file: string; cwd: string }[] = [];
+  private live: LiveSession[] = [];
 
   constructor(
     private readonly store: AgentStateStore,
@@ -135,8 +152,8 @@ export class SessionMetaPoller {
     private readonly projectsRoot = path.join(os.homedir(), '.claude', 'projects'),
   ) {}
 
-  /** Transcript + cwd of every session whose process was alive at the last tick. */
-  liveSessions(): { file: string; cwd: string }[] {
+  /** Every session alive at the last tick: Claude by pid, Codex by recent rollout. */
+  liveSessions(): LiveSession[] {
     return this.live;
   }
 
@@ -144,13 +161,25 @@ export class SessionMetaPoller {
     if (this.running) return;
     this.running = true;
     try {
-      const [records, psOut] = await Promise.all([this.io.readRecords(), this.io.readPs()]);
+      const [records, psOut, codex] = await Promise.all([
+        this.io.readRecords(),
+        this.io.readPs(),
+        // A broken ~/.codex must not take the Claude sessions down with it.
+        this.io.readCodex?.().catch(() => [] as CodexSession[]) ?? Promise.resolve([]),
+      ]);
       const rss = parsePsTree(psOut);
       const metas = buildSessionMetas(records, rss);
-      this.live = records.flatMap((rec) => {
+      const live: LiveSession[] = records.flatMap((rec) => {
         const file = rss.has(rec.pid) ? transcriptPathFor(this.projectsRoot, rec) : null;
-        return file && rec.cwd ? [{ file, cwd: rec.cwd }] : [];
+        return file && rec.cwd
+          ? [{ file, cwd: rec.cwd, sessionId: rec.sessionId, provider: 'claude' as const }]
+          : [];
       });
+      for (const c of codex) {
+        metas.set(c.sessionId, codexMeta(c));
+        live.push({ file: c.file, cwd: c.cwd, sessionId: c.sessionId, provider: 'codex' });
+      }
+      this.live = live;
       for (const [id, agent] of this.store) {
         const meta = metas.get(agent.sessionId);
         if (!meta || sameMeta(agent.sessionMeta, meta)) continue;
@@ -205,5 +234,6 @@ export function defaultIO(
           (err, stdout) => (err ? reject(err) : resolve(stdout)),
         );
       }),
+    readCodex: () => readCodexSessions(),
   };
 }

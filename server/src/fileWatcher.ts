@@ -1167,10 +1167,13 @@ function adoptExternalSession(
   readNewLines(id, agents, waitingTimers, permissionTimers);
 }
 
-/** A running Claude Code session: its transcript path and working directory. */
+/** A running session: its transcript path and working directory. */
 export interface LiveSession {
   file: string;
   cwd: string;
+  /** Defaults to the transcript basename (Claude); a Codex rollout name is not its id. */
+  sessionId?: string;
+  provider?: 'claude' | 'codex';
 }
 
 /** mptl fork: where the list of running sessions comes from (SessionMetaPoller in cli.ts). */
@@ -1199,11 +1202,11 @@ export function adoptLiveSessions(
   permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
   persistAgents: () => void,
 ): void {
-  for (const { file, cwd } of live) {
+  for (const { file, cwd, provider, ...rest } of live) {
     if (!fs.existsSync(file)) continue;
     // A session that changed cwd (e.g. entered a worktree) keeps its id but writes
     // a new transcript; a character still on the old file is a stale duplicate.
-    const sessionId = path.basename(file, '.jsonl');
+    const sessionId = rest.sessionId ?? path.basename(file, '.jsonl');
     const stale: number[] = [];
     for (const [id, agent] of agents) {
       if (agent.isExternal && agent.sessionId === sessionId && !pathsMatch(agent.jsonlFile, file)) {
@@ -1246,6 +1249,12 @@ export function adoptLiveSessions(
       persistAgents,
       directoryName,
     );
+    const adopted = agents.get(nextAgentIdRef.current - 1);
+    if (adopted) {
+      // Hook events carry the provider's own session id: keep it on the character.
+      adopted.sessionId = sessionId;
+      if (provider) adopted.providerId = provider;
+    }
     console.log(
       `[Pixel Agents] Watcher: Agent ${nextAgentIdRef.current - 1} - adopted live session${directoryName ? ` (${directoryName})` : ''}`,
     );

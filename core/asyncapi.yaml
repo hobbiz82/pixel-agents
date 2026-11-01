@@ -278,6 +278,11 @@ components:
             idle waiting on the user (drives the "Waiting for input" label);
             absent/false means the agent finished its turn ("Done").
 
+    SessionProvider:
+      description: mptl fork. The tool that runs a session.
+      type: string
+      enum: [claude, codex]
+
     AgentActivityStatus:
       description: Activity state of an agent.
       type: string
@@ -466,14 +471,18 @@ components:
         session's own status (idle / busy / waiting) with the epoch-ms time it
         entered that status. Sent only when something changed (RAM drift under
         5 % is ignored) and replayed to clients that connect later.
+        provider says which tool runs the session; Codex Desktop sessions
+        (read from ~/.codex) have no pid or rssBytes.
       type: object
       additionalProperties: false
-      required: [type, id, pid, rssBytes]
+      required: [type, id]
       properties:
         type:
           const: agentSessionMeta
         id:
           type: integer
+        provider:
+          $ref: '#/components/schemas/SessionProvider'
         pid:
           type: integer
         name:

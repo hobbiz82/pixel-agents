@@ -15,6 +15,7 @@ import { DISMISSED_COOLDOWN_MS } from '../src/constants.js';
 import { DismissalTracker } from '../src/dismissalTracker.js';
 import {
   adoptLiveSessions,
+  type LiveSession,
   setAgentRemovalCallback,
   setDismissalTracker,
 } from '../src/fileWatcher.js';
@@ -46,7 +47,7 @@ describe('adoptLiveSessions', () => {
     return file;
   }
 
-  function run(live: { file: string; cwd: string }[]): void {
+  function run(live: LiveSession[]): void {
     adoptLiveSessions(
       live,
       known,
@@ -144,5 +145,17 @@ describe('adoptLiveSessions', () => {
     expect(removed).toEqual([oldId]);
     expect([...agents.values()].map((a) => a.jsonlFile)).toEqual([live]);
     expect(tracker.isPermanentlyDismissed(old)).toBe(true);
+  });
+
+  it('a Codex rollout keeps the Codex session id so hook events find the character', () => {
+    const id = '01a1959a-67d5-7261-b369-63d1287ea28a';
+    const file = transcript(`rollout-2026-11-01T12-34-46-${id}`, 1000);
+    run([{ file, cwd: '/Users/seb/novaceu-hub', sessionId: id, provider: 'codex' }]);
+    const agent = [...agents.values()][0];
+    expect(agent.sessionId).toBe(id);
+    expect(agent.providerId).toBe('codex');
+    expect(agent.directoryName).toBe('novaceu-hub');
+    run([{ file, cwd: '/Users/seb/novaceu-hub', sessionId: id, provider: 'codex' }]);
+    expect(agents.size).toBe(1);
   });
 });

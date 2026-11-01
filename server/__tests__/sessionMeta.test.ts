@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resendAgentActivity } from '../src/agentActivityResend.js';
 import { createAgentState } from '../src/agentState.js';
 import { AgentStateStore } from '../src/agentStateStore.js';
+import type { CodexSession } from '../src/codexSessions.js';
 import {
   buildSessionMetas,
   parsePsTree,
@@ -100,6 +101,7 @@ describe('buildSessionMetas', () => {
     const metas = buildSessionMetas(records, rss);
     expect([...metas.keys()]).toEqual(['alive']);
     expect(metas.get('alive')).toEqual({
+      provider: 'claude',
       pid: 10,
       name: 'A',
       rssBytes: 2000 * KB,
@@ -157,6 +159,7 @@ describe('SessionMetaPoller', () => {
     );
     await poller.tick();
     expect(store.get(1)?.sessionMeta).toEqual({
+      provider: 'claude',
       pid: 10,
       name: 'Kho',
       rssBytes: 2048 * KB,
@@ -168,6 +171,7 @@ describe('SessionMetaPoller', () => {
       {
         type: 'agentSessionMeta',
         id: 1,
+        provider: 'claude',
         pid: 10,
         name: 'Kho',
         rssBytes: 2048 * KB,
@@ -260,7 +264,86 @@ describe('SessionMetaPoller.liveSessions', () => {
     expect(poller.liveSessions()).toEqual([]);
     await poller.tick();
     expect(poller.liveSessions()).toEqual([
-      { file: '/root/projects/-Users-seb-kho/live.jsonl', cwd: '/Users/seb/kho' },
+      {
+        file: '/root/projects/-Users-seb-kho/live.jsonl',
+        cwd: '/Users/seb/kho',
+        sessionId: 'live',
+        provider: 'claude',
+      },
     ]);
+  });
+});
+
+describe('SessionMetaPoller with Codex sessions', () => {
+  const CODEX_ID = '01a1959a-67d5-7261-b369-63d1287ea28a';
+  const codexFile = `/c/sessions/2026/11/01/rollout-2026-11-01T12-34-46-${CODEX_ID}.jsonl`;
+
+  function setup(readCodex: () => Promise<CodexSession[]>) {
+    const store = new AgentStateStore();
+    store.set(1, agent(1, 's1'));
+    store.set(2, agent(2, CODEX_ID));
+    const sent: Record<string, unknown>[] = [];
+    store.on('broadcast', (m) => sent.push(m));
+    const poller = new SessionMetaPoller(
+      store,
+      {
+        readRecords: async () => [{ pid: 10, sessionId: 's1', cwd: '/Users/seb/kho' }],
+        readPs: async () => '10 1 100',
+        readCodex,
+      },
+      '/root/projects',
+    );
+    return { store, sent, poller };
+  }
+
+  it('tags Codex sessions as codex, with name and status but no pid or RAM', async () => {
+    const { store, sent, poller } = setup(async () => [
+      {
+        sessionId: CODEX_ID,
+        file: codexFile,
+        cwd: '/Users/seb/novaceu-hub',
+        name: 'Hub — quyền',
+        status: 'idle',
+        statusSince: 5,
+      },
+    ]);
+    await poller.tick();
+    expect(store.get(2)?.sessionMeta).toEqual({
+      provider: 'codex',
+      name: 'Hub — quyền',
+      status: 'idle',
+      statusSince: 5,
+    });
+    expect(store.get(1)?.sessionMeta?.provider).toBe('claude');
+    expect(sent.find((m) => m.id === 2)).toEqual({
+      type: 'agentSessionMeta',
+      id: 2,
+      provider: 'codex',
+      name: 'Hub — quyền',
+      status: 'idle',
+      statusSince: 5,
+    });
+    expect(poller.liveSessions()).toContainEqual({
+      file: codexFile,
+      cwd: '/Users/seb/novaceu-hub',
+      sessionId: CODEX_ID,
+      provider: 'codex',
+    });
+  });
+
+  it('a broken Codex folder does not hide the Claude sessions', async () => {
+    const { store, poller } = setup(async () => {
+      throw new Error('EACCES');
+    });
+    await poller.tick();
+    expect(store.get(1)?.sessionMeta?.provider).toBe('claude');
+    expect(store.get(2)?.sessionMeta).toBeUndefined();
+    expect(poller.liveSessions()).toHaveLength(1);
+  });
+
+  it('sameMeta compares metas without RAM', () => {
+    const m = { provider: 'codex' as const, name: 'a', status: 'idle', statusSince: 1 };
+    expect(sameMeta(m, { ...m })).toBe(true);
+    expect(sameMeta(m, { ...m, status: 'busy' })).toBe(false);
   });
 });

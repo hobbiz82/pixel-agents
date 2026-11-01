@@ -126,11 +126,15 @@ export interface PersistedAgent {
   hueShift?: number;
 }
 
-/** What the session-meta poller knows about one live Claude Code session. */
+/**
+ * What the session-meta poller knows about one live session. Codex Desktop runs
+ * every session in one app process, so Codex metas have no pid or RAM.
+ */
 export interface SessionMeta {
-  pid: number;
+  provider?: 'claude' | 'codex';
+  pid?: number;
   name?: string;
-  rssBytes: number;
+  rssBytes?: number;
   status?: string;
   statusSince?: number;
 }

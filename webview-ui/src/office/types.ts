@@ -256,11 +256,12 @@ export interface Character {
   maxContextTokens: number;
 
   // -- Session meta (mptl fork) --
-  /** Claude Code session facts: display name, pid, RAM, status + since when. */
+  /** Session facts: tool (Claude/Codex), name, pid + RAM (Claude only), status + since when. */
   sessionMeta?: {
-    pid: number;
+    provider?: 'claude' | 'codex';
+    pid?: number;
     name?: string;
-    rssBytes: number;
+    rssBytes?: number;
     status?: string;
     statusSince?: number;
   };

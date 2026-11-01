@@ -9,12 +9,15 @@ import assert from 'node:assert/strict';
 
 import { test } from 'vitest';
 
+import { CLAUDE_TAG_COLOR, CODEX_TAG_COLOR } from '../src/constants.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
 import {
   formatIdle,
   formatRam,
   IDLE_ALERT_MS,
   isLongIdle,
+  providerTag,
+  sessionDetail,
   statusLabel,
 } from '../src/office/sessionMetaLabels.js';
 
@@ -68,4 +71,31 @@ test('session meta that arrives before its character is kept and applied on spaw
   const newer = { ...meta, status: 'busy' };
   os.setAgentSessionMeta(7, newer);
   assert.deepEqual(os.characters.get(7)?.sessionMeta, newer);
+});
+
+test('every session says whether Claude or Codex runs it, in words as well as colour', () => {
+  assert.deepEqual(providerTag({ provider: 'claude' }), {
+    label: 'Claude',
+    color: CLAUDE_TAG_COLOR,
+  });
+  assert.deepEqual(providerTag({ provider: 'codex' }), { label: 'Codex', color: CODEX_TAG_COLOR });
+  assert.notEqual(CLAUDE_TAG_COLOR, CODEX_TAG_COLOR);
+  assert.equal(providerTag({}), null);
+  assert.equal(providerTag(undefined), null);
+});
+
+test('session detail leaves out RAM and PID when the session has none (Codex)', () => {
+  const now = 100 * HOUR;
+  assert.equal(
+    sessionDetail({ provider: 'codex', status: 'idle', statusSince: now - 2 * HOUR }, now, 40),
+    'Rảnh 2 giờ · Context 40%',
+  );
+  assert.equal(
+    sessionDetail(
+      { provider: 'claude', pid: 12, rssBytes: 2 * GB, status: 'busy', statusSince: now },
+      now,
+      null,
+    ),
+    'Đang chạy 0 phút · RAM 2,0 GB · PID 12',
+  );
 });
