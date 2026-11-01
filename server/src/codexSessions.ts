@@ -80,7 +80,7 @@ async function listRollouts(dir: string, out: string[]): Promise<void> {
 async function readHeadAndTail(
   file: string,
   size: number,
-): Promise<{ cwd?: string; tail: string[] }> {
+): Promise<{ cwd?: string; subagent: boolean; tail: string[] }> {
   const fh = await open(file, 'r');
   try {
     const head = Buffer.alloc(Math.min(size, FIRST_LINE_MAX_BYTES));
@@ -88,10 +88,19 @@ async function readHeadAndTail(
     const firstText = head.subarray(0, bytesRead).toString('utf8');
     const nl = firstText.indexOf('\n');
     let cwd: string | undefined;
+    let subagent = false;
     if (nl > 0) {
       try {
-        const meta = JSON.parse(firstText.slice(0, nl)) as { payload?: { cwd?: unknown } };
+        const meta = JSON.parse(firstText.slice(0, nl)) as {
+          payload?: { cwd?: unknown; source?: unknown; parent_thread_id?: unknown };
+        };
         if (typeof meta.payload?.cwd === 'string') cwd = meta.payload.cwd;
+        // Sub-agent threads (e.g. Guardian review) run inside a parent thread
+        // and never show up in the Codex sidebar on their own.
+        const source = meta.payload?.source;
+        subagent =
+          (typeof source === 'object' && source !== null && 'subagent' in source) ||
+          typeof meta.payload?.parent_thread_id === 'string';
       } catch {
         // half-written first line: no cwd
       }
@@ -102,7 +111,7 @@ async function readHeadAndTail(
     const tail = tailBuf.toString('utf8').split('\n');
     // The first piece is usually a cut line; keep it only when we read from 0.
     if (tailLen < size) tail.shift();
-    return { cwd, tail };
+    return { cwd, subagent, tail };
   } finally {
     await fh.close();
   }
@@ -152,13 +161,13 @@ export async function readCodexSessions(
   const out: CodexSession[] = [];
   for (const { file, size } of recent) {
     const sessionId = codexRolloutId(file) as string;
-    let head: { cwd?: string; tail: string[] };
+    let head: { cwd?: string; subagent: boolean; tail: string[] };
     try {
       head = await readHeadAndTail(file, size);
     } catch {
       continue;
     }
-    if (!head.cwd) continue;
+    if (!head.cwd || head.subagent) continue;
     const session: CodexSession = { sessionId, file, cwd: head.cwd };
     const name = names.get(sessionId);
     if (name) session.name = name;

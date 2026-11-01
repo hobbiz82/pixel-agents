@@ -54,14 +54,21 @@ describe('readCodexSessions', () => {
   let root: string;
   const now = Date.parse('2026-11-01T09:00:00Z');
 
-  function rollout(day: string, id: string, cwd: string, ageMs: number, extra: string[]): string {
+  function rollout(
+    day: string,
+    id: string,
+    cwd: string,
+    ageMs: number,
+    extra: string[],
+    metaExtra: Record<string, unknown> = {},
+  ): string {
     const dir = path.join(root, 'sessions', '2026', '11', day);
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `rollout-2026-11-${day}T10-00-00-${id}.jsonl`);
     // session_meta carries ~20 KB of base instructions in real files.
     const meta = line(
       'session_meta',
-      { id, cwd, base_instructions: 'x'.repeat(30_000) },
+      { id, cwd, base_instructions: 'x'.repeat(30_000), ...metaExtra },
       '2026-11-01T01:00:00Z',
     );
     fs.writeFileSync(file, [meta, ...extra].join('\n') + '\n');
@@ -74,6 +81,16 @@ describe('readCodexSessions', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-codex-'));
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('skips Codex sub-agent threads such as Guardian review; they belong to a parent thread', async () => {
+    rollout('01', ID, '/Users/seb/mptl-kho', 60_000, [], { source: 'vscode' });
+    rollout('01', ID2, '/Users/seb/mptl-kho', 60_000, [], {
+      source: { subagent: { other: 'guardian' } },
+      parent_thread_id: ID,
+    });
+    const sessions = await readCodexSessions(root, now);
+    expect(sessions.map((s) => s.sessionId)).toEqual([ID]);
+  });
 
   it('lists sessions written in the recent window with cwd, name and status', async () => {
     const file = rollout('01', ID, '/Users/seb/novaceu-hub', 3_600_000, [
