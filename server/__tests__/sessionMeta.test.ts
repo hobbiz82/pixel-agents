@@ -10,6 +10,7 @@ import {
   sameMeta,
   SessionMetaPoller,
   type SessionRecord,
+  transcriptPathFor,
 } from '../src/sessionMeta.js';
 
 const KB = 1024;
@@ -222,5 +223,44 @@ describe('resendAgentActivity', () => {
       status: 'idle',
       statusSince: 7,
     });
+  });
+});
+
+describe('transcriptPathFor', () => {
+  it('maps cwd to the Claude projects folder the way Claude Code names it', () => {
+    expect(
+      transcriptPathFor('/home/u/.claude/projects', {
+        pid: 1,
+        sessionId: 'abc',
+        cwd: '/Users/seb/Desktop/my-project/lab_manager/.claude/worktrees/x',
+      }),
+    ).toBe(
+      '/home/u/.claude/projects/-Users-seb-Desktop-my-project-lab-manager--claude-worktrees-x/abc.jsonl',
+    );
+  });
+  it('returns null without a cwd', () => {
+    expect(transcriptPathFor('/r', { pid: 1, sessionId: 'abc' })).toBeNull();
+  });
+});
+
+describe('SessionMetaPoller.liveSessions', () => {
+  it('lists the transcript and cwd of every live session after a tick', async () => {
+    const store = new AgentStateStore();
+    const poller = new SessionMetaPoller(
+      store,
+      {
+        readRecords: async () => [
+          { pid: 10, sessionId: 'live', cwd: '/Users/seb/kho' },
+          { pid: 99, sessionId: 'dead', cwd: '/Users/seb/old' },
+        ],
+        readPs: async () => '10 1 100',
+      },
+      '/root/projects',
+    );
+    expect(poller.liveSessions()).toEqual([]);
+    await poller.tick();
+    expect(poller.liveSessions()).toEqual([
+      { file: '/root/projects/-Users-seb-kho/live.jsonl', cwd: '/Users/seb/kho' },
+    ]);
   });
 });

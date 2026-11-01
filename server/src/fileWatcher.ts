@@ -1167,6 +1167,76 @@ function adoptExternalSession(
   readNewLines(id, agents, waitingTimers, permissionTimers);
 }
 
+/** A running Claude Code session: its transcript path and working directory. */
+export interface LiveSession {
+  file: string;
+  cwd: string;
+}
+
+/** mptl fork: where the list of running sessions comes from (SessionMetaPoller in cli.ts). */
+let liveSessionSource: (() => LiveSession[]) | null = null;
+
+export function setLiveSessionSource(source: (() => LiveSession[]) | null): void {
+  liveSessionSource = source;
+}
+
+/** Live transcripts the user closed with X: never brought back while the session runs. */
+const userClosedLive = new Set<string>();
+
+/**
+ * mptl fork: adopt every running session as an external agent, however long it
+ * has been idle. Upstream only adopts transcripts written in the last minutes,
+ * so a session left open for days never got a character.
+ */
+export function adoptLiveSessions(
+  live: LiveSession[],
+  knownJsonlFiles: Set<string>,
+  nextAgentIdRef: { current: number },
+  agents: AgentStateStore,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  persistAgents: () => void,
+): void {
+  for (const { file, cwd } of live) {
+    if (knownJsonlFiles.has(file) || userClosedLive.has(file)) continue;
+    if (dismissalTracker?.isPermanentlyDismissed(file)) continue;
+    if (dismissalTracker?.isDismissed(file)) {
+      userClosedLive.add(file);
+      continue;
+    }
+    if (!fs.existsSync(file)) continue;
+    let tracked = false;
+    for (const agent of agents.values()) {
+      if (agent.jsonlFile === file) {
+        tracked = true;
+        break;
+      }
+    }
+    if (tracked) continue;
+    const projectDir = path.dirname(file);
+    const directoryName =
+      directoryNameResolver?.({ cwd, projectDir }) ?? (path.basename(cwd) || undefined);
+    knownJsonlFiles.add(file);
+    adoptExternalSession(
+      file,
+      projectDir,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      persistAgents,
+      directoryName,
+    );
+    console.log(
+      `[Pixel Agents] Watcher: Agent ${nextAgentIdRef.current - 1} - adopted live session${directoryName ? ` (${directoryName})` : ''}`,
+    );
+  }
+}
+
 /**
  * Periodically scans for external sessions (VS Code extension panel, etc.)
  * that produce JSONL files without an associated terminal.
@@ -1202,6 +1272,19 @@ export function startExternalSessionScanning(
         permissionTimers,
         persistAgents,
         hooksEnabledRef,
+      );
+    }
+    if (liveSessionSource) {
+      adoptLiveSessions(
+        liveSessionSource(),
+        knownJsonlFiles,
+        nextAgentIdRef,
+        agents,
+        fileWatchers,
+        pollingTimers,
+        waitingTimers,
+        permissionTimers,
+        persistAgents,
       );
     }
     // If "Watch All Sessions" is ON, also scan all global project dirs

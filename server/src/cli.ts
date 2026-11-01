@@ -32,6 +32,7 @@ import {
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
+import { setLiveSessionSource } from './fileWatcher.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
 import { SessionMetaPoller } from './sessionMeta.js';
@@ -233,6 +234,8 @@ async function main(): Promise<void> {
 
   // mptl fork: session name / RAM / status from ~/.claude/sessions + ps.
   const sessionMeta = new SessionMetaPoller(store);
+  // mptl fork: every running session gets a character, not only recently active ones.
+  setLiveSessionSource(() => sessionMeta.liveSessions());
 
   // ── Create server ──
   const server = new PixelAgentsServer();

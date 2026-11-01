@@ -98,6 +98,15 @@ export function buildSessionMetas(
   return metas;
 }
 
+/**
+ * ~/.claude/projects/<cwd with every non-alphanumeric char as '-'>/<sessionId>.jsonl,
+ * the path Claude Code writes the session transcript to.
+ */
+export function transcriptPathFor(projectsRoot: string, rec: SessionRecord): string | null {
+  if (!rec.cwd) return null;
+  return path.join(projectsRoot, rec.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${rec.sessionId}.jsonl`);
+}
+
 export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
   if (!a) return false;
   if (a.pid !== b.pid || a.name !== b.name) return false;
@@ -118,18 +127,30 @@ export function sessionMetaMessage(id: number, meta: SessionMeta): Record<string
 export class SessionMetaPoller {
   private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
+  private live: { file: string; cwd: string }[] = [];
 
   constructor(
     private readonly store: AgentStateStore,
     private readonly io: SessionMetaIO = defaultIO(),
+    private readonly projectsRoot = path.join(os.homedir(), '.claude', 'projects'),
   ) {}
+
+  /** Transcript + cwd of every session whose process was alive at the last tick. */
+  liveSessions(): { file: string; cwd: string }[] {
+    return this.live;
+  }
 
   async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
       const [records, psOut] = await Promise.all([this.io.readRecords(), this.io.readPs()]);
-      const metas = buildSessionMetas(records, parsePsTree(psOut));
+      const rss = parsePsTree(psOut);
+      const metas = buildSessionMetas(records, rss);
+      this.live = records.flatMap((rec) => {
+        const file = rss.has(rec.pid) ? transcriptPathFor(this.projectsRoot, rec) : null;
+        return file && rec.cwd ? [{ file, cwd: rec.cwd }] : [];
+      });
       for (const [id, agent] of this.store) {
         const meta = metas.get(agent.sessionId);
         if (!meta || sameMeta(agent.sessionMeta, meta)) continue;
