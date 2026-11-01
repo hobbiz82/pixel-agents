@@ -1200,13 +1200,28 @@ export function adoptLiveSessions(
   persistAgents: () => void,
 ): void {
   for (const { file, cwd } of live) {
+    if (!fs.existsSync(file)) continue;
+    // A session that changed cwd (e.g. entered a worktree) keeps its id but writes
+    // a new transcript; a character still on the old file is a stale duplicate.
+    const sessionId = path.basename(file, '.jsonl');
+    const stale: number[] = [];
+    for (const [id, agent] of agents) {
+      if (agent.isExternal && agent.sessionId === sessionId && !pathsMatch(agent.jsonlFile, file)) {
+        stale.push(id);
+      }
+    }
+    for (const id of stale) {
+      const oldFile = agents.get(id)?.jsonlFile;
+      if (oldFile) dismissalTracker?.permanentlyDismiss(oldFile);
+      console.log(`[Pixel Agents] Watcher: Agent ${id} - session moved to another transcript`);
+      agentRemovalCallback?.(id);
+    }
     if (knownJsonlFiles.has(file) || userClosedLive.has(file)) continue;
     if (dismissalTracker?.isPermanentlyDismissed(file)) continue;
     if (dismissalTracker?.isDismissed(file)) {
       userClosedLive.add(file);
       continue;
     }
-    if (!fs.existsSync(file)) continue;
     let tracked = false;
     for (const agent of agents.values()) {
       if (agent.jsonlFile === file) {

@@ -13,7 +13,11 @@ vi.mock('vscode', () => ({
 import { AgentStateStore } from '../src/agentStateStore.js';
 import { DISMISSED_COOLDOWN_MS } from '../src/constants.js';
 import { DismissalTracker } from '../src/dismissalTracker.js';
-import { adoptLiveSessions, setDismissalTracker } from '../src/fileWatcher.js';
+import {
+  adoptLiveSessions,
+  setAgentRemovalCallback,
+  setDismissalTracker,
+} from '../src/fileWatcher.js';
 import { PathSet } from '../src/pathKey.js';
 
 /**
@@ -117,5 +121,28 @@ describe('adoptLiveSessions', () => {
     tracker.permanentlyDismiss(file);
     run([{ file, cwd: '/Users/seb/kho' }]);
     expect(agents.size).toBe(0);
+  });
+
+  it('drops the old character of a session that moved to another transcript', () => {
+    const live = transcript('s-moved', 1000);
+    const oldDir = path.join(tmpDir, '-Users-seb');
+    fs.mkdirSync(oldDir, { recursive: true });
+    const old = path.join(oldDir, 's-moved.jsonl');
+    fs.writeFileSync(old, '{}\n');
+    run([{ file: old, cwd: '/Users/seb' }]);
+    expect(agents.size).toBe(1);
+    const oldId = [...agents.keys()][0];
+
+    const removed: number[] = [];
+    setAgentRemovalCallback((id) => {
+      removed.push(id);
+      agents.delete(id);
+    });
+    run([{ file: live, cwd: '/Users/seb/kho' }]);
+    setAgentRemovalCallback(null);
+
+    expect(removed).toEqual([oldId]);
+    expect([...agents.values()].map((a) => a.jsonlFile)).toEqual([live]);
+    expect(tracker.isPermanentlyDismissed(old)).toBe(true);
   });
 });
