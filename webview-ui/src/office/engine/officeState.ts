@@ -507,6 +507,11 @@ export class OfficeState {
     if (!skipSpawnEffect) {
       startMatrixEffect(ch, 'spawn');
     }
+    const pendingMeta = this.pendingSessionMeta.get(id);
+    if (pendingMeta) {
+      ch.sessionMeta = pendingMeta;
+      this.pendingSessionMeta.delete(id);
+    }
     this.characters.set(id, ch);
   }
 
@@ -1120,6 +1125,19 @@ export class OfficeState {
     if (!ch) return;
     ch.contextTokens = contextTokens;
     ch.maxContextTokens = maxContextTokens;
+  }
+
+  /** Meta that arrived before its character spawned (mptl fork). The server
+   *  only re-sends on change, so dropping it would leave an idle session blank. */
+  private pendingSessionMeta = new Map<number, NonNullable<Character['sessionMeta']>>();
+
+  setAgentSessionMeta(id: number, meta: NonNullable<Character['sessionMeta']>): void {
+    const ch = this.characters.get(id);
+    if (!ch) {
+      this.pendingSessionMeta.set(id, meta);
+      return;
+    }
+    ch.sessionMeta = meta;
   }
 
   update(dt: number): void {

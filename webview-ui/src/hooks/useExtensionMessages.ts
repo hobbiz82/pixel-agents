@@ -844,6 +844,15 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentContextUsage') {
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
+      } else if (msg.type === 'agentSessionMeta') {
+        // mptl fork: session name, RAM, status
+        os.setAgentSessionMeta(msg.id as number, {
+          pid: msg.pid as number,
+          name: msg.name as string | undefined,
+          rssBytes: msg.rssBytes as number,
+          status: msg.status as string | undefined,
+          statusSince: msg.statusSince as number | undefined,
+        });
       }
     };
     const unsubscribe = transport.onMessage(handler);

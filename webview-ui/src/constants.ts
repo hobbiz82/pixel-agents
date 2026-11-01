@@ -283,6 +283,8 @@ export const CONTEXT_GAUGE_BG = '#222';
 // ── Agent Teams ─────────────────────────────────────────────
 export const TEAM_LEAD_COLOR = '#ffd700';
 export const TEAM_ROLE_COLOR = '#66aaff';
+/** mptl fork: badge colour for Claude sessions idle 24 h or more. */
+export const LONG_IDLE_COLOR = '#f5a623';
 
 // ── Pets ────────────────────────────────────────────────────────
 /** Walking speed in world pixels per second (matches character walk speed visually but slower). */

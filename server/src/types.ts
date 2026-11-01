@@ -58,6 +58,11 @@ export interface AgentState {
    *  sidechain records belong to sub-agents and stop moving the gauge. */
   sawMainChainUsage?: boolean;
 
+  // -- Session meta (server/src/sessionMeta.ts, mptl fork) --
+  /** Name, pid, RAM and status of the Claude Code process behind this agent;
+   *  undefined until the poller finds its ~/.claude/sessions file. */
+  sessionMeta?: SessionMeta;
+
   // -- Agent Teams --
   teamName?: string;
   agentName?: string;
@@ -119,4 +124,13 @@ export interface PersistedAgent {
   palette?: number;
   /** Hue shift in degrees (0-360). Persisted alongside palette. */
   hueShift?: number;
+}
+
+/** What the session-meta poller knows about one live Claude Code session. */
+export interface SessionMeta {
+  pid: number;
+  name?: string;
+  rssBytes: number;
+  status?: string;
+  statusSince?: number;
 }

@@ -1,4 +1,5 @@
 import type { AgentStateStore } from './agentStateStore.js';
+import { sessionMetaMessage } from './sessionMeta.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 
 /**
@@ -83,6 +84,11 @@ export function resendAgentActivity(
         contextTokens: agent.contextTokens,
         maxContextTokens: agent.maxContextTokens,
       });
+    }
+
+    // 6. Session meta (mptl fork)
+    if (agent.sessionMeta) {
+      send(sessionMetaMessage(id, agent.sessionMeta));
     }
   }
 }

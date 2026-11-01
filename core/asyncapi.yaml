@@ -100,6 +100,8 @@ components:
         - $ref: '#/components/schemas/AgentTeamInfo'
         # Context window
         - $ref: '#/components/schemas/AgentContextUsage'
+        # Session meta (mptl fork)
+        - $ref: '#/components/schemas/AgentSessionMeta'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -454,6 +456,33 @@ components:
         contextTokens:
           type: integer
         maxContextTokens:
+          type: integer
+
+    AgentSessionMeta:
+      description: |
+        mptl fork. Facts about the Claude Code process behind an agent, read
+        from ~/.claude/sessions/<pid>.json and `ps`: the session's display
+        name, its pid, resident memory of the process tree in bytes, and the
+        session's own status (idle / busy / waiting) with the epoch-ms time it
+        entered that status. Sent only when something changed (RAM drift under
+        5 % is ignored) and replayed to clients that connect later.
+      type: object
+      additionalProperties: false
+      required: [type, id, pid, rssBytes]
+      properties:
+        type:
+          const: agentSessionMeta
+        id:
+          type: integer
+        pid:
+          type: integer
+        name:
+          type: string
+        rssBytes:
+          type: integer
+        status:
+          type: string
+        statusSince:
           type: integer
 
     LayoutLoaded:

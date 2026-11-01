@@ -34,6 +34,7 @@ import {
 import { FileStateAdapter } from './fileStateAdapter.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
+import { SessionMetaPoller } from './sessionMeta.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
 import { isLoopbackHost, normalizeHostname } from './wsAuth.js';
 
@@ -230,6 +231,9 @@ async function main(): Promise<void> {
   const adapter = new FileStateAdapter({ namespace: 'standalone' });
   store.setAdapter(adapter);
 
+  // mptl fork: session name / RAM / status from ~/.claude/sessions + ps.
+  const sessionMeta = new SessionMetaPoller(store);
+
   // ── Create server ──
   const server = new PixelAgentsServer();
 
@@ -417,6 +421,8 @@ async function main(): Promise<void> {
       `\n  Pixel Agents server running at http://${displayHost}:${config.port}/?token=${config.token}\n`,
     );
 
+    sessionMeta.start();
+
     // ── Graceful shutdown ──
     let shuttingDown = false;
     async function shutdown(): Promise<void> {
@@ -427,6 +433,7 @@ async function main(): Promise<void> {
       // wait for them: exiting now would cancel the SIGKILL escalation and
       // leave a child that ignores SIGHUP orphaned on a dead server.
       await ptyManager.disposeAll();
+      sessionMeta.stop();
       runtime.dispose();
       server.stop();
       process.exit(0);
