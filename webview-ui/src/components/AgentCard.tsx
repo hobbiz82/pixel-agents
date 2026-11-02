@@ -42,6 +42,23 @@ interface AgentCardProps {
   onClose: (agentId: number) => void;
   /** mptl fork: session name, tool and idle time beside the mug shot. */
   info?: SessionRow;
+  /** mptl fork: Lưu trữ (opens the confirm). Absent in a read-only office. */
+  onArchive?: (agentId: number) => void;
+  /** Why Lưu trữ is not offered right now (busy, waiting…); null/absent = offered. */
+  archiveBlock?: string | null;
+}
+
+/** 10×10 archive box, drawn in SVG so it does not depend on the pixel font's glyphs. */
+function ArchiveIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" shapeRendering="crispEdges">
+      <rect x="0" y="1" width="10" height="2" fill="currentColor" />
+      <rect x="1" y="3" width="1" height="6" fill="currentColor" />
+      <rect x="8" y="3" width="1" height="6" fill="currentColor" />
+      <rect x="1" y="8" width="8" height="1" fill="currentColor" />
+      <rect x="4" y="4" width="2" height="1" fill="currentColor" />
+    </svg>
+  );
 }
 
 /** Hover text: full session name, folder, then status · RAM. */
@@ -65,6 +82,8 @@ export function AgentCard({
   onSelect,
   onClose,
   info,
+  onArchive,
+  archiveBlock = null,
 }: AgentCardProps) {
   return (
     <div
@@ -109,6 +128,23 @@ export function AgentCard({
         >
           ×
         </Button>
+        {onArchive && (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Lưu trữ phiên"
+            aria-disabled={archiveBlock !== null}
+            title={archiveBlock ?? 'Lưu trữ phiên này (có hỏi lại)'}
+            data-testid="agent-card-archive"
+            className={archiveBlock ? 'opacity-[var(--btn-disabled-opacity)] cursor-default' : ''}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!archiveBlock) onArchive(agentId);
+            }}
+          >
+            <ArchiveIcon />
+          </Button>
+        )}
         {/* 1px left: optically centres the solid square under the pixel-font ×
             glyph, which sits a hair left in its cell. mb (not pb) lifts it off
             the card's bottom edge: the span is a fixed-size empty box, so

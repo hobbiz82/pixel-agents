@@ -9,6 +9,12 @@ import { setGhostHeadlessAgents as setRendererGhostHeadlessAgents } from '../off
 import { setFloorSprites } from '../office/floorTiles.js';
 import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
+import {
+  type ArchivedSession,
+  archiveResultText,
+  parseArchivedSessions,
+  restoreResultText,
+} from '../office/sessionArchive.js';
 import { setCarpetSprites } from '../office/sprites/carpetTiles.js';
 import { setPetTemplates } from '../office/sprites/petSpriteData.js';
 import { setCharacterTemplates } from '../office/sprites/spriteData.js';
@@ -151,6 +157,10 @@ interface ExtensionMessageState {
   /** A read-only office (standalone without the server token): every change it
    *  sends is refused, so the UI hides the controls that would send one. */
   officeReadOnly: boolean;
+  /** mptl fork: sessions archived from the office (tokened office only). */
+  archivedSessions: ArchivedSession[];
+  /** mptl fork: last archive/restore outcome, shown as a short notice. */
+  archiveNotice: { ok: boolean; text: string; at: number } | null;
   // Terminal (standalone only; always false/empty under VS Code, which owns its
   // own terminals and never sends these messages)
   terminalAvailable: boolean;
@@ -220,6 +230,12 @@ export function useExtensionMessages(
   const [showHostDirectories, setShowHostDirectories] = useState(false);
   // Never sent under VS Code, so it stays false there.
   const [officeReadOnly, setOfficeReadOnly] = useState(false);
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const [archiveNotice, setArchiveNotice] = useState<{
+    ok: boolean;
+    text: string;
+    at: number;
+  } | null>(null);
   // Terminal control plane (standalone only; the server never sends these in
   // VS Code mode, so terminalAvailable stays false and no terminal UI renders).
   const [terminalAvailable, setTerminalAvailable] = useState(false);
@@ -290,6 +306,31 @@ export function useExtensionMessages(
 
       if (msg.type === 'officeAccess') {
         setOfficeReadOnly(msg.readOnly === true);
+        return;
+      }
+
+      if (msg.type === 'archivedSessions') {
+        setArchivedSessions(parseArchivedSessions(msg.sessions));
+        return;
+      }
+
+      if (msg.type === 'sessionArchiveResult') {
+        const ok = msg.ok === true;
+        setArchiveNotice({
+          ok,
+          text: archiveResultText({ ok, reason: msg.reason as string | undefined }),
+          at: Date.now(),
+        });
+        return;
+      }
+
+      if (msg.type === 'sessionRestoreResult') {
+        const ok = msg.ok === true;
+        setArchiveNotice({
+          ok,
+          text: restoreResultText({ ok, reason: msg.reason as string | undefined }),
+          at: Date.now(),
+        });
         return;
       }
 
@@ -928,6 +969,8 @@ export function useExtensionMessages(
     showHostDirectories,
     setShowHostDirectories,
     officeReadOnly,
+    archivedSessions,
+    archiveNotice,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,

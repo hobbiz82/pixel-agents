@@ -28,6 +28,8 @@ interface AgentCardBarProps {
   /** mptl fork: session name / tool / idle for each card. When given, the bar
    *  gets a toggle that widens it to show this beside the mug shots. */
   infoFor?: (agentId: number, now: number) => SessionRow | undefined;
+  /** mptl fork: Lưu trữ on each card; absent in a read-only office. */
+  onArchive?: (agentId: number) => void;
 }
 
 /** Saved expand choice; defaults to expanded. Storage may be blocked. */
@@ -71,6 +73,7 @@ export function AgentCardBar({
   onSelect,
   onClose,
   infoFor,
+  onArchive,
 }: AgentCardBarProps) {
   const [expanded, setExpanded] = useState(readExpanded);
   const showInfo = infoFor !== undefined && expanded;
@@ -110,6 +113,8 @@ export function AgentCardBar({
           onSelect={onSelect}
           onClose={onClose}
           info={showInfo ? infoFor(agentId, now) : undefined}
+          onArchive={onArchive}
+          archiveBlock={onArchive && infoFor ? (infoFor(agentId, now)?.archiveBlock ?? null) : null}
         />
       ))}
     </div>

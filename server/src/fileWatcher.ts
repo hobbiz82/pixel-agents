@@ -1186,6 +1186,11 @@ export function setLiveSessionSource(source: (() => LiveSession[]) | null): void
 /** Live transcripts the user closed with X: never brought back while the session runs. */
 const userClosedLive = new Set<string>();
 
+/** mptl fork: a session restored from the archive may get its character back. */
+export function forgetUserClosed(file: string): void {
+  userClosedLive.delete(file);
+}
+
 /**
  * mptl fork: adopt every running session as an external agent, however long it
  * has been idle. Upstream only adopts transcripts written in the last minutes,

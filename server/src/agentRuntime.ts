@@ -19,6 +19,7 @@ import { DismissalTracker } from './dismissalTracker.js';
 import {
   adoptExternalSessionFromHook,
   ensureProjectScan,
+  forgetUserClosed,
   isTrackedProjectDir,
   reassignAgentToFile,
   scanForBackgroundAgentFiles,
@@ -382,6 +383,12 @@ export class AgentRuntime {
    * re-adopts it. Children first — once the Lead is gone, nothing can find
    * them (a later sessionEnd resolves no agent).
    */
+  /** mptl fork: undo closeAgent's dismissal so a restored session is adopted again. */
+  allowReadoption(file: string): void {
+    this.dismissalTracker.clearDismissal(file);
+    forgetUserClosed(file);
+  }
+
   closeAgent(id: number): void {
     const agent = this.store.get(id);
     if (!agent) return;

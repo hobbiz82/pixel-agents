@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 
 import { toMajorMinor } from './changelogData.js';
 import { AgentCardBar } from './components/AgentCardBar.js';
+import { ArchiveConfirmModal, type ArchiveTarget } from './components/ArchiveConfirmModal.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
@@ -39,6 +40,7 @@ import { exportLayoutToFile } from './office/layout/exportLayout.js';
 import { isRotatable } from './office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { overlayProjection } from './office/projection.js';
+import type { ArchivedSession } from './office/sessionArchive.js';
 import type { SessionInput } from './office/sessionRows.js';
 import { buildSessionRows } from './office/sessionRows.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
@@ -122,6 +124,8 @@ function App() {
     showHostDirectories,
     setShowHostDirectories,
     officeReadOnly,
+    archivedSessions,
+    archiveNotice,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,
@@ -391,6 +395,33 @@ function App() {
     (now: number) => buildSessionRows(agents.map(sessionInput), now),
     [agents, sessionInput],
   );
+  // mptl fork: archive one session (confirm first; the server re-checks all).
+  const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
+  const requestArchive = useCallback(
+    (agentId: number) => {
+      const input = sessionInput(agentId);
+      const row = buildSessionRows([input], Date.now())[0];
+      const provider = input.meta?.provider;
+      if (!row || row.archiveBlock || !provider) return;
+      setArchiveTarget({ id: agentId, name: row.name, folder: row.folder, provider });
+    },
+    [sessionInput],
+  );
+  const confirmArchive = useCallback((target: ArchiveTarget) => {
+    transport.send({ type: 'archiveSession', id: target.id, folder: target.folder });
+    setArchiveTarget(null);
+  }, []);
+  const handleRestore = useCallback((session: ArchivedSession) => {
+    transport.send({ type: 'restoreSession', sessionId: session.sessionId });
+  }, []);
+  const [noticeShown, setNoticeShown] = useState<number | null>(null);
+  useEffect(() => {
+    if (!archiveNotice) return;
+    setNoticeShown(archiveNotice.at);
+    const t = setTimeout(() => setNoticeShown(null), 6000);
+    return () => clearTimeout(t);
+  }, [archiveNotice]);
+
   const handlePickSession = useCallback((agentId: number) => {
     setIsSessionsOpen(false);
     getOfficeState().selectAndFollow(agentId);
@@ -802,6 +833,7 @@ function App() {
                 onSelect={handleCardSelect}
                 onClose={handleCloseAgent}
                 infoFor={sessionInfoFor}
+                onArchive={officeReadOnly ? undefined : requestArchive}
               />
             )
           )}
@@ -817,7 +849,25 @@ function App() {
         onClose={() => setIsSessionsOpen(false)}
         rowsAt={sessionRowsAt}
         onPick={handlePickSession}
+        onArchive={officeReadOnly ? undefined : (row) => requestArchive(row.id)}
+        archived={archivedSessions}
+        onRestore={officeReadOnly ? undefined : handleRestore}
       />
+      <ArchiveConfirmModal
+        target={archiveTarget}
+        onCancel={() => setArchiveTarget(null)}
+        onConfirm={confirmArchive}
+      />
+      {archiveNotice && noticeShown === archiveNotice.at && (
+        <div
+          role="status"
+          className="fixed bottom-60 left-1/2 -translate-x-1/2 z-[70] bg-bg border-2 border-border shadow-pixel px-12 py-4 text-sm pointer-events-none"
+          style={{ color: archiveNotice.ok ? undefined : 'var(--color-status-error)' }}
+          data-testid="archive-notice"
+        >
+          {archiveNotice.text}
+        </div>
+      )}
       <Modal
         isOpen={isHooksInfoOpen}
         onClose={() => setIsHooksInfoOpen(false)}

@@ -2,6 +2,7 @@
  * mptl fork: one row per session, shared by the card bar (name + tool + idle
  * beside each mug shot) and the "Phiên" table. Pure: callers pass `now`.
  */
+import { archiveBlock } from './sessionArchive.js';
 import type { SessionFacts } from './sessionMetaLabels.js';
 import { formatRam, isLongIdle, providerTag, statusLabel } from './sessionMetaLabels.js';
 
@@ -24,6 +25,8 @@ export interface SessionRow {
   idleMs: number | null;
   ramText: string;
   longIdle: boolean;
+  /** Why Lưu trữ is not offered (busy, waiting, unknown tool); null = offered. */
+  archiveBlock: string | null;
 }
 
 /** 0 waiting on anh · 1 running · 2 idle · 3 unknown. */
@@ -46,6 +49,7 @@ function toRow(input: SessionInput, now: number): SessionRow {
     idleMs: idle ? now - (meta.statusSince as number) : null,
     ramText: meta.rssBytes !== undefined ? formatRam(meta.rssBytes) : '',
     longIdle: !input.attention && isLongIdle(meta, now),
+    archiveBlock: archiveBlock(input),
   };
 }
 

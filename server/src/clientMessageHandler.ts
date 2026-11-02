@@ -25,6 +25,13 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import {
+  type ArchiveIO,
+  archiveSession,
+  defaultArchiveIO,
+  foldArchiveLog,
+  restoreSession,
+} from './sessionArchive.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
@@ -74,6 +81,9 @@ export interface ClientMessageContext {
   /** PTY terminals for standalone-launched agents. Absent in VS Code embedded
    *  mode, where the editor owns terminal lifecycle. */
   ptyManager?: PtySessionManager;
+  /** Session archive side effects (mptl fork). Tests inject a fake; default
+   *  acts on this machine (sessionArchive.defaultArchiveIO). */
+  archiveIO?: ArchiveIO;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -175,6 +185,14 @@ export function handleClientMessage(
       }
       break;
     }
+
+    case 'archiveSession':
+      handleArchiveSession(msg, send, ctx);
+      break;
+
+    case 'restoreSession':
+      handleRestoreSession(msg, send, ctx);
+      break;
 
     case 'requestDiagnostics':
       // Point-to-point reply to the requesting socket (NOT a broadcast).
@@ -445,6 +463,83 @@ function standaloneConsentEffects(
   };
 }
 
+/**
+ * mptl fork: archive the session behind one character (see sessionArchive.ts
+ * for what that does per tool and every check before it acts). Only reachable
+ * past the read-only gate. The reply goes to the asking office; the new
+ * archived list goes to every office.
+ */
+function handleArchiveSession(
+  msg: Record<string, unknown>,
+  send: WsSend,
+  ctx: ClientMessageContext,
+): void {
+  const id = msg.id as number;
+  const agent = ctx.store.get(id);
+  const runtime = ctx.runtime;
+  if (!agent || !runtime) {
+    send({ type: 'sessionArchiveResult', id, ok: false, reason: 'unknown' });
+    return;
+  }
+  const io = ctx.archiveIO ?? defaultArchiveIO();
+  const folder = typeof msg.folder === 'string' ? msg.folder.slice(0, 200) : undefined;
+  void archiveSession(
+    { sessionId: agent.sessionId, folder, file: agent.jsonlFile, meta: agent.sessionMeta },
+    io,
+  )
+    .then(async (out) => {
+      if (!out.ok) {
+        send({ type: 'sessionArchiveResult', id, ok: false, reason: out.reason });
+        return;
+      }
+      ctx.ptyManager?.dispose(id);
+      runtime.closeAgent(id);
+      send({
+        type: 'sessionArchiveResult',
+        id,
+        ok: true,
+        provider: out.entry.provider,
+        sessionId: out.entry.sessionId,
+      });
+      ctx.store.broadcast({
+        type: 'archivedSessions',
+        sessions: foldArchiveLog(await io.readLog()),
+      });
+    })
+    .catch((err: unknown) => {
+      console.error('[Pixel Agents] archiveSession failed:', err);
+      send({ type: 'sessionArchiveResult', id, ok: false, reason: 'failed' });
+    });
+}
+
+/** Restore by session id; the tool comes from the archive log, never the client. */
+function handleRestoreSession(
+  msg: Record<string, unknown>,
+  send: WsSend,
+  ctx: ClientMessageContext,
+): void {
+  const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : '';
+  const io = ctx.archiveIO ?? defaultArchiveIO();
+  void (async () => {
+    const entry = foldArchiveLog(await io.readLog()).find((e) => e.sessionId === sessionId);
+    if (!entry) {
+      send({ type: 'sessionRestoreResult', sessionId, ok: false, reason: 'unknown' });
+      return;
+    }
+    const out = await restoreSession({ sessionId, provider: entry.provider }, io);
+    if (!out.ok) {
+      send({ type: 'sessionRestoreResult', sessionId, ok: false, reason: out.reason });
+      return;
+    }
+    if (entry.file) ctx.runtime?.allowReadoption(entry.file);
+    send({ type: 'sessionRestoreResult', sessionId, ok: true });
+    ctx.store.broadcast({ type: 'archivedSessions', sessions: foldArchiveLog(await io.readLog()) });
+  })().catch((err: unknown) => {
+    console.error('[Pixel Agents] restoreSession failed:', err);
+    send({ type: 'sessionRestoreResult', sessionId, ok: false, reason: 'failed' });
+  });
+}
+
 function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   const { store, runtime, cache } = ctx;
   const adapter = store.getAdapter();
@@ -453,6 +548,18 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // a change (all refused by refuseReadOnly), so it must know before it draws
   // them.
   send({ type: 'officeAccess', readOnly: ctx.privileged !== true });
+
+  // 0b. mptl fork: archived sessions, for the Phiên table's restore tab. Only a
+  // tokened office can restore, so only it gets the list.
+  if (ctx.privileged === true) {
+    const io = ctx.archiveIO ?? defaultArchiveIO();
+    void io
+      .readLog()
+      .then((events) => send({ type: 'archivedSessions', sessions: foldArchiveLog(events) }))
+      .catch(() => {
+        // unreadable log: the restore tab stays empty
+      });
+  }
 
   // 1. Provider capabilities (must arrive before any agent messages)
   send({

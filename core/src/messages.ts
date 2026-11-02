@@ -76,7 +76,9 @@ export type ClientMessage =
   | SaveDirectory
   | RemoveDirectory
   | RequestDirectorySuggestions
-  | RequestDiagnostics;
+  | RequestDiagnostics
+  | ArchiveSession
+  | RestoreSession;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -528,4 +530,18 @@ export interface RequestDirectorySuggestions {
 
 export interface RequestDiagnostics {
   type: 'requestDiagnostics';
+}
+
+/** mptl fork: archive the session behind one character (server re-checks it). */
+export interface ArchiveSession {
+  type: 'archiveSession';
+  id: number;
+  /** Display folder, kept in the archive log for the restore tab. */
+  folder?: string;
+}
+
+/** mptl fork: restore an archived session; the tool comes from the server's log. */
+export interface RestoreSession {
+  type: 'restoreSession';
+  sessionId: string;
 }
