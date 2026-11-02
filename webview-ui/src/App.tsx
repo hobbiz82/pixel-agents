@@ -676,6 +676,20 @@ function App() {
         />
       )}
 
+      {/* mptl fork: the Phiên table only reads, so a view-only desktop office
+          (no toolbar) still gets it at the toolbar's spot. */}
+      {!isMobile && officeReadOnly && !isDebugMode && (
+        <div className="absolute left-10 bottom-10 z-20 pixel-panel p-4">
+          <Button
+            onClick={() => setIsSessionsOpen(true)}
+            title="Danh sách phiên"
+            data-testid="sessions-button"
+          >
+            Phiên
+          </Button>
+        </div>
+      )}
+
       {/* Mobile: Settings floats top-left (the layout editor stays desktop-
             only — its tools are drag/hover-driven). */}
       {isMobile && !isDebugMode && !officeReadOnly && (
