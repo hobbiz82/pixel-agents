@@ -20,6 +20,8 @@ interface BottomToolbarProps {
   terminalAvailable: boolean;
   /** Why the terminal is off (shown on the disabled button's tooltip). */
   terminalUnavailableReason: string | null;
+  /** mptl fork: opens the "Phiên" table of every session. */
+  onOpenSessions?: () => void;
 }
 
 export function BottomToolbar({
@@ -32,6 +34,7 @@ export function BottomToolbar({
   onEditDirectory,
   terminalAvailable,
   terminalUnavailableReason,
+  onOpenSessions,
 }: BottomToolbarProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const launchRef = useRef<HTMLDivElement>(null);
@@ -110,6 +113,11 @@ export function BottomToolbar({
             }}
           />
         </div>
+      )}
+      {onOpenSessions && (
+        <Button onClick={onOpenSessions} title="Danh sách phiên" data-testid="sessions-button">
+          Phiên
+        </Button>
       )}
       <Button
         variant={isEditMode ? 'active' : 'default'}

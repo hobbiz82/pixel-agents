@@ -350,6 +350,12 @@ export const TERMINAL_DRAWER_MAX_WIDTH_RATIO = 0.8;
  *  16px close/status column + card chrome ≈ 63px, plus a little air each
  *  side). */
 export const TERMINAL_SIDEBAR_WIDTH_PX = 72;
+/** mptl fork: card bar width when it also shows each session's name. */
+export const CARD_BAR_EXPANDED_WIDTH_PX = 260;
+/** mptl fork: localStorage key remembering whether the card bar shows names. */
+export const CARD_BAR_EXPANDED_STORAGE_KEY = 'mptl.cardBarExpanded';
+/** mptl fork: how often the card bar and Phiên table refresh idle times. */
+export const SESSION_INFO_REFRESH_MS = 10_000;
 /** Grab width of the drag handle on the panel's left edge. */
 export const TERMINAL_DRAWER_RESIZE_HANDLE_PX = 6;
 

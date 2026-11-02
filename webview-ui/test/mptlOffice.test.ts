@@ -41,9 +41,9 @@ function loadRealCatalog(): LoadedAssetData {
       groupId: m.id as string,
       name: m.name as string,
       category: m.category as string,
-      canPlaceOnWalls: m.canPlaceOnWalls as boolean | undefined,
-      canPlaceOnSurfaces: m.canPlaceOnSurfaces as boolean | undefined,
-      backgroundTiles: m.backgroundTiles as number | undefined,
+      canPlaceOnWalls: m.canPlaceOnWalls === true,
+      canPlaceOnSurfaces: m.canPlaceOnSurfaces === true,
+      backgroundTiles: (m.backgroundTiles as number | undefined) ?? 0,
       ...(m.rotationScheme ? { rotationScheme: m.rotationScheme as string } : {}),
     };
     const assets: FurnitureAsset[] =
@@ -60,7 +60,9 @@ function loadRealCatalog(): LoadedAssetData {
               footprintW: m.footprintW as number,
               footprintH: m.footprintH as number,
               isDesk: m.category === 'desks',
-              backgroundTiles: m.backgroundTiles as number | undefined,
+              canPlaceOnWalls: inherited.canPlaceOnWalls,
+              canPlaceOnSurfaces: inherited.canPlaceOnSurfaces,
+              backgroundTiles: inherited.backgroundTiles,
               groupId: m.id as string,
             },
           ]

@@ -10,6 +10,7 @@ import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { SessionsModal } from './components/SessionsModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { TerminalDrawer } from './components/TerminalDrawer.js';
 import { Tooltip } from './components/Tooltip.js';
@@ -38,6 +39,8 @@ import { exportLayoutToFile } from './office/layout/exportLayout.js';
 import { isRotatable } from './office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { overlayProjection } from './office/projection.js';
+import type { SessionInput } from './office/sessionRows.js';
+import { buildSessionRows } from './office/sessionRows.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout, TILE_SIZE } from './office/types.js';
 import { isBrowserRuntime, isE2E } from './runtime.js';
@@ -131,6 +134,7 @@ function App() {
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
+  const [isSessionsOpen, setIsSessionsOpen] = useState(false);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
@@ -362,6 +366,33 @@ function App() {
   // show — and select its character so the office follows the click.
   const handleCardSelect = useCallback((agentId: number) => {
     transport.send({ type: 'focusAgent', id: agentId });
+    getOfficeState().selectAndFollow(agentId);
+  }, []);
+
+  // mptl fork: session facts for the card bar and the Phiên table, read from
+  // the characters (session meta lives in OfficeState, not React state).
+  const sessionInput = useCallback(
+    (agentId: number): SessionInput => {
+      const ch = getOfficeState().characters.get(agentId);
+      return {
+        id: agentId,
+        folder: ch?.directoryName,
+        meta: ch?.sessionMeta,
+        attention: terminalDrawer.statusFor(agentId) === 'attention',
+      };
+    },
+    [terminalDrawer],
+  );
+  const sessionInfoFor = useCallback(
+    (agentId: number, now: number) => buildSessionRows([sessionInput(agentId)], now)[0],
+    [sessionInput],
+  );
+  const sessionRowsAt = useCallback(
+    (now: number) => buildSessionRows(agents.map(sessionInput), now),
+    [agents, sessionInput],
+  );
+  const handlePickSession = useCallback((agentId: number) => {
+    setIsSessionsOpen(false);
     getOfficeState().selectAndFollow(agentId);
   }, []);
 
@@ -641,6 +672,7 @@ function App() {
           onEditDirectory={directoryEditor.edit}
           terminalAvailable={terminalAvailable}
           terminalUnavailableReason={terminalUnavailableReason}
+          onOpenSessions={() => setIsSessionsOpen(true)}
         />
       )}
 
@@ -755,6 +787,7 @@ function App() {
                 statusFor={terminalDrawer.statusFor}
                 onSelect={handleCardSelect}
                 onClose={handleCloseAgent}
+                infoFor={sessionInfoFor}
               />
             )
           )}
@@ -765,6 +798,12 @@ function App() {
           office region it would sit in the mobile shell's transformed track,
           and a transformed ancestor is the containing block of position:
           fixed — the modal would size to the 200%-wide track. */}
+      <SessionsModal
+        isOpen={isSessionsOpen}
+        onClose={() => setIsSessionsOpen(false)}
+        rowsAt={sessionRowsAt}
+        onPick={handlePickSession}
+      />
       <Modal
         isOpen={isHooksInfoOpen}
         onClose={() => setIsHooksInfoOpen(false)}

@@ -1,7 +1,16 @@
-import { TERMINAL_SIDEBAR_WIDTH_PX } from '../constants.js';
+import { useState } from 'react';
+
+import {
+  CARD_BAR_EXPANDED_STORAGE_KEY,
+  CARD_BAR_EXPANDED_WIDTH_PX,
+  TERMINAL_SIDEBAR_WIDTH_PX,
+} from '../constants.js';
+import { useNow } from '../hooks/useNow.js';
+import type { SessionRow } from '../office/sessionRows.js';
 import type { AgentAppearance, TabStatus } from './AgentCard.js';
 import { AgentCard } from './AgentCard.js';
 import { cardVariant } from './cardBar.js';
+import { Button } from './ui/Button.js';
 
 interface AgentCardBarProps {
   /** Agents to show, top to bottom. */
@@ -16,6 +25,26 @@ interface AgentCardBarProps {
   statusFor: (agentId: number) => TabStatus | null;
   onSelect: (agentId: number) => void;
   onClose: (agentId: number) => void;
+  /** mptl fork: session name / tool / idle for each card. When given, the bar
+   *  gets a toggle that widens it to show this beside the mug shots. */
+  infoFor?: (agentId: number, now: number) => SessionRow | undefined;
+}
+
+/** Saved expand choice; defaults to expanded. Storage may be blocked. */
+function readExpanded(): boolean {
+  try {
+    return localStorage.getItem(CARD_BAR_EXPANDED_STORAGE_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function saveExpanded(expanded: boolean): void {
+  try {
+    localStorage.setItem(CARD_BAR_EXPANDED_STORAGE_KEY, expanded ? '1' : '0');
+  } catch {
+    // private window / blocked storage: the choice just isn't remembered
+  }
 }
 
 /**
@@ -41,14 +70,36 @@ export function AgentCardBar({
   statusFor,
   onSelect,
   onClose,
+  infoFor,
 }: AgentCardBarProps) {
+  const [expanded, setExpanded] = useState(readExpanded);
+  const showInfo = infoFor !== undefined && expanded;
+  const now = useNow(showInfo);
+
   if (agentIds.length === 0) return null;
+
+  const width = showInfo ? CARD_BAR_EXPANDED_WIDTH_PX : TERMINAL_SIDEBAR_WIDTH_PX;
 
   return (
     <div
-      className="relative z-30 h-full shrink-0 flex flex-col items-center gap-4 pt-4 overflow-y-auto pointer-events-none"
-      style={{ width: TERMINAL_SIDEBAR_WIDTH_PX, marginLeft: -TERMINAL_SIDEBAR_WIDTH_PX }}
+      className={`relative z-30 h-full shrink-0 flex flex-col gap-4 pt-4 overflow-y-auto pointer-events-none ${showInfo ? 'items-stretch px-4' : 'items-center'}`}
+      style={{ width, marginLeft: -width }}
     >
+      {infoFor && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="pointer-events-auto self-end shrink-0"
+          title={expanded ? 'Ẩn tên phiên' : 'Hiện tên phiên'}
+          data-testid="card-bar-toggle"
+          onClick={() => {
+            setExpanded(!expanded);
+            saveExpanded(!expanded);
+          }}
+        >
+          {expanded ? '»' : '«'}
+        </Button>
+      )}
       {agentIds.map((agentId) => (
         <AgentCard
           key={agentId}
@@ -58,6 +109,7 @@ export function AgentCardBar({
           status={statusFor(agentId)}
           onSelect={onSelect}
           onClose={onClose}
+          info={showInfo ? infoFor(agentId, now) : undefined}
         />
       ))}
     </div>
