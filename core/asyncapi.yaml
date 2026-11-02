@@ -102,6 +102,10 @@ components:
         - $ref: '#/components/schemas/AgentContextUsage'
         # Session meta (mptl fork)
         - $ref: '#/components/schemas/AgentSessionMeta'
+        # Session archive (mptl fork)
+        - $ref: '#/components/schemas/ArchivedSessions'
+        - $ref: '#/components/schemas/SessionArchiveResult'
+        - $ref: '#/components/schemas/SessionRestoreResult'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -160,6 +164,8 @@ components:
         - $ref: '#/components/schemas/RemoveDirectory'
         - $ref: '#/components/schemas/RequestDirectorySuggestions'
         - $ref: '#/components/schemas/RequestDiagnostics'
+        - $ref: '#/components/schemas/ArchiveSession'
+        - $ref: '#/components/schemas/RestoreSession'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -493,6 +499,82 @@ components:
           type: string
         statusSince:
           type: integer
+
+    ArchivedSessions:
+      description: |
+        mptl fork. Sessions archived from the office, newest first: the archive
+        log (~/.pixel-agents/session-archive.jsonl) folded. Sent on
+        webviewReady to tokened clients only and broadcast after every
+        archive / restore.
+      type: object
+      additionalProperties: false
+      required: [type, sessions]
+      properties:
+        type:
+          const: archivedSessions
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArchivedSessionEntry'
+
+    ArchivedSessionEntry:
+      description: mptl fork. One archived session.
+      type: object
+      additionalProperties: false
+      required: [sessionId, provider, archivedAt]
+      properties:
+        sessionId:
+          type: string
+        provider:
+          $ref: '#/components/schemas/SessionProvider'
+        name:
+          type: string
+        folder:
+          type: string
+        cwd:
+          type: string
+        entrypoint:
+          type: string
+        file:
+          type: string
+        archivedAt:
+          type: integer
+
+    SessionArchiveResult:
+      description: |
+        mptl fork. Reply to archiveSession, to the asking client only. reason
+        when refused: busy, waiting, process_changed, unknown or failed.
+      type: object
+      additionalProperties: false
+      required: [type, id, ok]
+      properties:
+        type:
+          const: sessionArchiveResult
+        id:
+          type: integer
+        ok:
+          type: boolean
+        reason:
+          type: string
+        provider:
+          $ref: '#/components/schemas/SessionProvider'
+        sessionId:
+          type: string
+
+    SessionRestoreResult:
+      description: mptl fork. Reply to restoreSession, to the asking client only.
+      type: object
+      additionalProperties: false
+      required: [type, sessionId, ok]
+      properties:
+        type:
+          const: sessionRestoreResult
+        sessionId:
+          type: string
+        ok:
+          type: boolean
+        reason:
+          type: string
 
     LayoutLoaded:
       description: |
@@ -1357,6 +1439,35 @@ components:
       properties:
         type:
           const: requestDiagnostics
+
+    ArchiveSession:
+      description: |
+        mptl fork. Archive the session behind one agent (Claude: SIGTERM after
+        identity checks; Codex: codex archive). The server refuses while the
+        session is busy or waiting. folder is the display label kept in the log.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: archiveSession
+        id:
+          type: integer
+        folder:
+          type: string
+
+    RestoreSession:
+      description: |
+        mptl fork. Restore an archived session by id; the tool is taken from the
+        server's archive log, never from the client.
+      type: object
+      additionalProperties: false
+      required: [type, sessionId]
+      properties:
+        type:
+          const: restoreSession
+        sessionId:
+          type: string
 
     # ── Supporting schemas ─────────────────────────────────────────
 

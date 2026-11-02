@@ -26,6 +26,9 @@ export type ServerMessage =
   | AgentTeamInfo
   | AgentContextUsage
   | AgentSessionMeta
+  | ArchivedSessions
+  | SessionArchiveResult
+  | SessionRestoreResult
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -216,6 +219,38 @@ export interface AgentSessionMeta {
 }
 
 export type SessionProvider = 'claude' | 'codex';
+
+export interface ArchivedSessions {
+  type: 'archivedSessions';
+  sessions: ArchivedSessionEntry[];
+}
+
+export interface ArchivedSessionEntry {
+  sessionId: string;
+  provider: SessionProvider;
+  name?: string;
+  folder?: string;
+  cwd?: string;
+  entrypoint?: string;
+  file?: string;
+  archivedAt: number;
+}
+
+export interface SessionArchiveResult {
+  type: 'sessionArchiveResult';
+  id: number;
+  ok: boolean;
+  reason?: string;
+  provider?: SessionProvider;
+  sessionId?: string;
+}
+
+export interface SessionRestoreResult {
+  type: 'sessionRestoreResult';
+  sessionId: string;
+  ok: boolean;
+  reason?: string;
+}
 
 export interface LayoutLoaded {
   type: 'layoutLoaded';
@@ -532,15 +567,12 @@ export interface RequestDiagnostics {
   type: 'requestDiagnostics';
 }
 
-/** mptl fork: archive the session behind one character (server re-checks it). */
 export interface ArchiveSession {
   type: 'archiveSession';
   id: number;
-  /** Display folder, kept in the archive log for the restore tab. */
   folder?: string;
 }
 
-/** mptl fork: restore an archived session; the tool comes from the server's log. */
 export interface RestoreSession {
   type: 'restoreSession';
   sessionId: string;
