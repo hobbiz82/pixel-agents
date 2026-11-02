@@ -283,6 +283,11 @@ export const CONTEXT_GAUGE_BG = '#222';
 // ── Agent Teams ─────────────────────────────────────────────
 export const TEAM_LEAD_COLOR = '#ffd700';
 export const TEAM_ROLE_COLOR = '#66aaff';
+/** mptl fork: badge colour for Claude sessions idle 24 h or more. */
+export const LONG_IDLE_COLOR = '#f5a623';
+/** mptl fork: tag under every character naming the tool behind it (≥ 5:1 on #1e1e2e). */
+export const CLAUDE_TAG_COLOR = '#d97757';
+export const CODEX_TAG_COLOR = '#10a37f';
 
 // ── Pets ────────────────────────────────────────────────────────
 /** Walking speed in world pixels per second (matches character walk speed visually but slower). */
@@ -345,6 +350,12 @@ export const TERMINAL_DRAWER_MAX_WIDTH_RATIO = 0.8;
  *  16px close/status column + card chrome ≈ 63px, plus a little air each
  *  side). */
 export const TERMINAL_SIDEBAR_WIDTH_PX = 72;
+/** mptl fork: card bar width when it also shows each session's name. */
+export const CARD_BAR_EXPANDED_WIDTH_PX = 260;
+/** mptl fork: localStorage key remembering whether the card bar shows names. */
+export const CARD_BAR_EXPANDED_STORAGE_KEY = 'mptl.cardBarExpanded';
+/** mptl fork: how often the card bar and Phiên table refresh idle times. */
+export const SESSION_INFO_REFRESH_MS = 10_000;
 /** Grab width of the drag handle on the panel's left edge. */
 export const TERMINAL_DRAWER_RESIZE_HANDLE_PX = 6;
 

@@ -32,8 +32,17 @@ import {
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
-import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
+import { setLiveSessionSource } from './fileWatcher.js';
+import {
+  claudeProvider,
+  codexProvider,
+  copyCodexHookScript,
+  copyHookScript,
+  hookProviderById,
+  hookProviders,
+} from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
+import { SessionMetaPoller } from './sessionMeta.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
 import { isLoopbackHost, normalizeHostname } from './wsAuth.js';
 
@@ -193,6 +202,25 @@ function reportTerminalStatus(
   }
 }
 
+/** Same contract as copyHookScriptOrReport, for a non-Claude provider. Each
+ *  provider ships its own script, so the copier is resolved by provider id
+ *  rather than assuming one shared file. */
+function copyCodexHookScriptOrReport(providerId: string, packageRoot: string): boolean {
+  const copiers: Record<string, (root: string) => boolean> = {
+    [codexProvider.id]: copyCodexHookScript,
+  };
+  const copy = copiers[providerId];
+  if (!copy) {
+    // A provider with no script copier installs nothing on this surface; that is
+    // a wiring bug, not a user error, so it is reported rather than ignored.
+    console.error(`[Pixel Agents] No hook script copier registered for "${providerId}".`);
+    return false;
+  }
+  if (copy(packageRoot)) return true;
+  console.error(`[Pixel Agents] ${providerId} hooks NOT installed: hook script missing.`);
+  return false;
+}
+
 // ── Main ──────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -229,6 +257,11 @@ async function main(): Promise<void> {
   const store = new AgentStateStore();
   const adapter = new FileStateAdapter({ namespace: 'standalone' });
   store.setAdapter(adapter);
+
+  // mptl fork: session name / RAM / status from ~/.claude/sessions + ps.
+  const sessionMeta = new SessionMetaPoller(store);
+  // mptl fork: every running session gets a character, not only recently active ones.
+  setLiveSessionSource(() => sessionMeta.liveSessions());
 
   // ── Create server ──
   const server = new PixelAgentsServer();
@@ -385,6 +418,31 @@ async function main(): Promise<void> {
           console.error(`[Pixel Agents] ${err instanceof Error ? err.message : String(err)}`);
         }
       }
+
+      // Every OTHER bundled provider, each gated on its own consent record and
+      // presence check. Deliberately not folded into the Claude arm above:
+      // Claude carries the pre-consent migration (grant-on-already-installed)
+      // that a new provider has no history for, and a provider whose CLI is
+      // absent is skipped in SILENCE — an approval notice for a tool the user
+      // never installed is pure noise.
+      for (const provider of hookProviders) {
+        if (provider.id === claudeProvider.id) continue;
+        if (provider.isPresent?.() === false) continue;
+        if (!getHooksEnabled(provider.id)) continue;
+        if (getHooksConsent(provider.id) !== 'granted') {
+          console.log(
+            `[Pixel Agents] ${provider.displayName} hooks not installed: needs one-time approval — open the URL below to review and approve it.`,
+          );
+          continue;
+        }
+        if (!copyCodexHookScriptOrReport(provider.id, packageRoot)) continue;
+        try {
+          await provider.installHooks(`http://127.0.0.1:${config.port}`, config.token);
+          console.log(`[Pixel Agents] ${provider.displayName} hooks installed`);
+        } catch (err) {
+          console.error(`[Pixel Agents] ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     } else {
       // Without this line, a persisted hooks-off makes startup skip the entire
       // consent/install flow with zero output — indistinguishable from a bug.
@@ -417,6 +475,8 @@ async function main(): Promise<void> {
       `\n  Pixel Agents server running at http://${displayHost}:${config.port}/?token=${config.token}\n`,
     );
 
+    sessionMeta.start();
+
     // ── Graceful shutdown ──
     let shuttingDown = false;
     async function shutdown(): Promise<void> {
@@ -427,6 +487,7 @@ async function main(): Promise<void> {
       // wait for them: exiting now would cancel the SIGKILL escalation and
       // leave a child that ignores SIGHUP orphaned on a dead server.
       await ptyManager.disposeAll();
+      sessionMeta.stop();
       runtime.dispose();
       server.stop();
       process.exit(0);

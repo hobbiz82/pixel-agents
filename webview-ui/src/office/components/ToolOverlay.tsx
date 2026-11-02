@@ -16,6 +16,7 @@ import {
   CONTEXT_GAUGE_HEIGHT_PX,
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
+  LONG_IDLE_COLOR,
   OVERLAY_BUBBLE_Z_INDEX,
   OVERLAY_LABEL_SELECTED_Z_INDEX,
   OVERLAY_LABEL_Z_INDEX,
@@ -26,6 +27,7 @@ import {
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { overlayProjection } from '../projection.js';
+import { formatIdle, isLongIdle, providerTag, sessionDetail } from '../sessionMetaLabels.js';
 import { getCachedSprite } from '../sprites/spriteCache.js';
 import { BUBBLE_PERMISSION_SPRITE, BUBBLE_WAITING_SPRITE } from '../sprites/spriteData.js';
 import type { ToolActivity } from '../types.js';
@@ -122,11 +124,13 @@ export function ToolOverlay({
   onCloseAgent,
   alwaysShowOverlay,
 }: ToolOverlayProps) {
-  const [, setTick] = useState(0);
+  // Re-render every frame; the wall clock rides along for the idle labels
+  // (mptl fork) so render itself stays pure.
+  const [now, setNow] = useState(0);
   useEffect(() => {
     let rafId = 0;
     const tick = () => {
-      setTick((n) => n + 1);
+      setNow(Date.now());
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
@@ -197,10 +201,50 @@ export function ToolOverlay({
           );
         }
 
+        // mptl fork: every session shows under its feet which tool runs it
+        // (Claude / Codex); a session idle 24 h+ adds an amber "Rảnh N giờ",
+        // so stale sessions stand out without hovering.
+        const meta = isSub ? undefined : ch.sessionMeta;
+        const longIdle = isLongIdle(meta, now);
+        const tag = providerTag(meta);
+        const idleText =
+          longIdle && meta?.statusSince !== undefined
+            ? `Rảnh ${formatIdle(now - meta.statusSince)}`
+            : null;
+        const footTag =
+          tag || idleText ? (
+            <div
+              className="absolute -translate-x-1/2 pointer-events-none whitespace-nowrap pixel-panel px-4 leading-none"
+              style={{
+                left: project.toScreenX(ch.x),
+                top: project.toScreenY(ch.y) + 2,
+                fontSize: '16px',
+                zIndex: OVERLAY_LABEL_Z_INDEX,
+              }}
+              data-testid="session-tag"
+              data-provider={meta?.provider}
+            >
+              {tag && <span style={{ color: tag.color }}>{tag.label}</span>}
+              {tag && idleText && ' · '}
+              {idleText && (
+                <span style={{ color: LONG_IDLE_COLOR }} data-testid="long-idle-badge">
+                  {idleText}
+                </span>
+              )}
+            </div>
+          ) : null;
+
         // Only show the label for hovered or selected agents (unless
         // always-show is on) — the bubble renders regardless.
         if (!alwaysShowOverlay && !isSelected && !isHovered) {
-          return bubbleNode && <Fragment key={id}>{bubbleNode}</Fragment>;
+          return (
+            (bubbleNode || footTag) && (
+              <Fragment key={id}>
+                {bubbleNode}
+                {footTag}
+              </Fragment>
+            )
+          );
         }
 
         // Position above character
@@ -219,6 +263,7 @@ export function ToolOverlay({
           return (
             <Fragment key={id}>
               {bubbleNode}
+              {footTag}
               <div
                 className="absolute"
                 style={{ left: screenX, top: screenY, pointerEvents: 'none' }}
@@ -276,6 +321,10 @@ export function ToolOverlay({
         // Team info
         const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
         const hasExtraLines = !!(ch.directoryName || teamRoleLabel);
+        // mptl fork: session name always; RAM / status / pid only when selected.
+        const sessionName = meta?.name || null;
+        const showSessionDetail = isSelected && !!meta;
+        const anchorBottom = !!meta;
 
         // Context gauge. Every agent gets one — lead, teammate, adopted,
         // headless — as soon as it has taken a turn. Sub-agents never do: they
@@ -286,11 +335,14 @@ export function ToolOverlay({
         return (
           <Fragment key={id}>
             {bubbleNode}
+            {footTag}
             <div
-              className="absolute flex flex-col items-center -translate-x-1/2"
+              className={`absolute flex flex-col items-center -translate-x-1/2 ${anchorBottom ? '-translate-y-full' : ''}`}
               style={{
                 left: screenX,
-                top: screenY - (hasExtraLines ? 34 : 28),
+                // Panels with session meta grow upward from the head, so extra
+                // lines never cover the character.
+                top: anchorBottom ? screenY + 6 : screenY - (hasExtraLines ? 34 : 28),
                 pointerEvents: isSelected ? 'auto' : 'none',
                 opacity: alwaysShowOverlay && !isSelected && !isHovered ? (isSub ? 0.5 : 0.75) : 1,
                 zIndex: isSelected ? OVERLAY_LABEL_SELECTED_Z_INDEX : OVERLAY_LABEL_Z_INDEX,
@@ -306,6 +358,15 @@ export function ToolOverlay({
                   />
                 )}
                 <div className="flex flex-col gap-0 overflow-hidden">
+                  {sessionName && (
+                    <span
+                      className="overflow-hidden text-ellipsis block leading-none"
+                      style={{ fontSize: '18px', fontWeight: 'bold' }}
+                      data-testid="session-name"
+                    >
+                      {sessionName}
+                    </span>
+                  )}
                   {teamRoleLabel && (
                     <span
                       className="overflow-hidden text-ellipsis block leading-none"
@@ -330,6 +391,19 @@ export function ToolOverlay({
                   {ch.directoryName && (
                     <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
                       {ch.directoryName}
+                    </span>
+                  )}
+                  {showSessionDetail && meta && (
+                    <span
+                      className="text-2xs leading-none overflow-hidden text-ellipsis block"
+                      style={{ color: longIdle ? LONG_IDLE_COLOR : undefined }}
+                      data-testid="session-detail"
+                    >
+                      {sessionDetail(
+                        meta,
+                        now,
+                        ch.contextTokens > 0 ? Math.round(contextRatio * 100) : null,
+                      )}
                     </span>
                   )}
                 </div>

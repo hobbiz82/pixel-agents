@@ -1167,6 +1167,105 @@ function adoptExternalSession(
   readNewLines(id, agents, waitingTimers, permissionTimers);
 }
 
+/** A running session: its transcript path and working directory. */
+export interface LiveSession {
+  file: string;
+  cwd: string;
+  /** Defaults to the transcript basename (Claude); a Codex rollout name is not its id. */
+  sessionId?: string;
+  provider?: 'claude' | 'codex';
+}
+
+/** mptl fork: where the list of running sessions comes from (SessionMetaPoller in cli.ts). */
+let liveSessionSource: (() => LiveSession[]) | null = null;
+
+export function setLiveSessionSource(source: (() => LiveSession[]) | null): void {
+  liveSessionSource = source;
+}
+
+/** Live transcripts the user closed with X: never brought back while the session runs. */
+const userClosedLive = new Set<string>();
+
+/** mptl fork: a session restored from the archive may get its character back. */
+export function forgetUserClosed(file: string): void {
+  userClosedLive.delete(file);
+}
+
+/**
+ * mptl fork: adopt every running session as an external agent, however long it
+ * has been idle. Upstream only adopts transcripts written in the last minutes,
+ * so a session left open for days never got a character.
+ */
+export function adoptLiveSessions(
+  live: LiveSession[],
+  knownJsonlFiles: Set<string>,
+  nextAgentIdRef: { current: number },
+  agents: AgentStateStore,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  persistAgents: () => void,
+): void {
+  for (const { file, cwd, provider, ...rest } of live) {
+    if (!fs.existsSync(file)) continue;
+    // A session that changed cwd (e.g. entered a worktree) keeps its id but writes
+    // a new transcript; a character still on the old file is a stale duplicate.
+    const sessionId = rest.sessionId ?? path.basename(file, '.jsonl');
+    const stale: number[] = [];
+    for (const [id, agent] of agents) {
+      if (agent.isExternal && agent.sessionId === sessionId && !pathsMatch(agent.jsonlFile, file)) {
+        stale.push(id);
+      }
+    }
+    for (const id of stale) {
+      const oldFile = agents.get(id)?.jsonlFile;
+      if (oldFile) dismissalTracker?.permanentlyDismiss(oldFile);
+      console.log(`[Pixel Agents] Watcher: Agent ${id} - session moved to another transcript`);
+      agentRemovalCallback?.(id);
+    }
+    if (knownJsonlFiles.has(file) || userClosedLive.has(file)) continue;
+    if (dismissalTracker?.isPermanentlyDismissed(file)) continue;
+    if (dismissalTracker?.isDismissed(file)) {
+      userClosedLive.add(file);
+      continue;
+    }
+    let tracked = false;
+    for (const agent of agents.values()) {
+      if (agent.jsonlFile === file) {
+        tracked = true;
+        break;
+      }
+    }
+    if (tracked) continue;
+    const projectDir = path.dirname(file);
+    const directoryName =
+      directoryNameResolver?.({ cwd, projectDir }) ?? (path.basename(cwd) || undefined);
+    knownJsonlFiles.add(file);
+    adoptExternalSession(
+      file,
+      projectDir,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      persistAgents,
+      directoryName,
+    );
+    const adopted = agents.get(nextAgentIdRef.current - 1);
+    if (adopted) {
+      // Hook events carry the provider's own session id: keep it on the character.
+      adopted.sessionId = sessionId;
+      if (provider) adopted.providerId = provider;
+    }
+    console.log(
+      `[Pixel Agents] Watcher: Agent ${nextAgentIdRef.current - 1} - adopted live session${directoryName ? ` (${directoryName})` : ''}`,
+    );
+  }
+}
+
 /**
  * Periodically scans for external sessions (VS Code extension panel, etc.)
  * that produce JSONL files without an associated terminal.
@@ -1202,6 +1301,19 @@ export function startExternalSessionScanning(
         permissionTimers,
         persistAgents,
         hooksEnabledRef,
+      );
+    }
+    if (liveSessionSource) {
+      adoptLiveSessions(
+        liveSessionSource(),
+        knownJsonlFiles,
+        nextAgentIdRef,
+        agents,
+        fileWatchers,
+        pollingTimers,
+        waitingTimers,
+        permissionTimers,
+        persistAgents,
       );
     }
     // If "Watch All Sessions" is ON, also scan all global project dirs

@@ -381,7 +381,14 @@ export class OfficeState {
     }
     if (freeSeats.length === 0) return null;
 
-    const areaLabels = directoryName ? this.areaMappings[directoryName] : undefined;
+    // mptl fork: with no saved mapping, an Area named exactly like the folder
+    // counts as its mapping (the bundled office ships rooms named per project).
+    const areaLabels = directoryName
+      ? (this.areaMappings[directoryName] ??
+        ((this.layout.areas ?? []).some((a) => a.label === directoryName)
+          ? [directoryName]
+          : undefined))
+      : undefined;
 
     // Stage 1 — in-area seats for the Directory's mapped Area labels.
     if (areaLabels && areaLabels.length > 0) {
@@ -506,6 +513,11 @@ export class OfficeState {
     }
     if (!skipSpawnEffect) {
       startMatrixEffect(ch, 'spawn');
+    }
+    const pendingMeta = this.pendingSessionMeta.get(id);
+    if (pendingMeta) {
+      ch.sessionMeta = pendingMeta;
+      this.pendingSessionMeta.delete(id);
     }
     this.characters.set(id, ch);
   }
@@ -1120,6 +1132,19 @@ export class OfficeState {
     if (!ch) return;
     ch.contextTokens = contextTokens;
     ch.maxContextTokens = maxContextTokens;
+  }
+
+  /** Meta that arrived before its character spawned (mptl fork). The server
+   *  only re-sends on change, so dropping it would leave an idle session blank. */
+  private pendingSessionMeta = new Map<number, NonNullable<Character['sessionMeta']>>();
+
+  setAgentSessionMeta(id: number, meta: NonNullable<Character['sessionMeta']>): void {
+    const ch = this.characters.get(id);
+    if (!ch) {
+      this.pendingSessionMeta.set(id, meta);
+      return;
+    }
+    ch.sessionMeta = meta;
   }
 
   update(dt: number): void {

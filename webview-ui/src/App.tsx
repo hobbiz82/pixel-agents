@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 
 import { toMajorMinor } from './changelogData.js';
 import { AgentCardBar } from './components/AgentCardBar.js';
+import { ArchiveConfirmModal, type ArchiveTarget } from './components/ArchiveConfirmModal.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
@@ -10,6 +11,7 @@ import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { SessionsModal } from './components/SessionsModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { TerminalDrawer } from './components/TerminalDrawer.js';
 import { Tooltip } from './components/Tooltip.js';
@@ -38,6 +40,9 @@ import { exportLayoutToFile } from './office/layout/exportLayout.js';
 import { isRotatable } from './office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { overlayProjection } from './office/projection.js';
+import type { ArchivedSession } from './office/sessionArchive.js';
+import type { SessionInput } from './office/sessionRows.js';
+import { buildSessionRows } from './office/sessionRows.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout, TILE_SIZE } from './office/types.js';
 import { isBrowserRuntime, isE2E } from './runtime.js';
@@ -119,6 +124,8 @@ function App() {
     showHostDirectories,
     setShowHostDirectories,
     officeReadOnly,
+    archivedSessions,
+    archiveNotice,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,
@@ -131,6 +138,7 @@ function App() {
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
+  const [isSessionsOpen, setIsSessionsOpen] = useState(false);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
@@ -362,6 +370,60 @@ function App() {
   // show — and select its character so the office follows the click.
   const handleCardSelect = useCallback((agentId: number) => {
     transport.send({ type: 'focusAgent', id: agentId });
+    getOfficeState().selectAndFollow(agentId);
+  }, []);
+
+  // mptl fork: session facts for the card bar and the Phiên table, read from
+  // the characters (session meta lives in OfficeState, not React state).
+  const sessionInput = useCallback(
+    (agentId: number): SessionInput => {
+      const ch = getOfficeState().characters.get(agentId);
+      return {
+        id: agentId,
+        folder: ch?.directoryName,
+        meta: ch?.sessionMeta,
+        attention: terminalDrawer.statusFor(agentId) === 'attention',
+      };
+    },
+    [terminalDrawer],
+  );
+  const sessionInfoFor = useCallback(
+    (agentId: number, now: number) => buildSessionRows([sessionInput(agentId)], now)[0],
+    [sessionInput],
+  );
+  const sessionRowsAt = useCallback(
+    (now: number) => buildSessionRows(agents.map(sessionInput), now),
+    [agents, sessionInput],
+  );
+  // mptl fork: archive one session (confirm first; the server re-checks all).
+  const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
+  const requestArchive = useCallback(
+    (agentId: number) => {
+      const input = sessionInput(agentId);
+      const row = buildSessionRows([input], Date.now())[0];
+      const provider = input.meta?.provider;
+      if (!row || row.archiveBlock || !provider) return;
+      setArchiveTarget({ id: agentId, name: row.name, folder: row.folder, provider });
+    },
+    [sessionInput],
+  );
+  const confirmArchive = useCallback((target: ArchiveTarget) => {
+    transport.send({ type: 'archiveSession', id: target.id, folder: target.folder });
+    setArchiveTarget(null);
+  }, []);
+  const handleRestore = useCallback((session: ArchivedSession) => {
+    transport.send({ type: 'restoreSession', sessionId: session.sessionId });
+  }, []);
+  const [noticeShown, setNoticeShown] = useState<number | null>(null);
+  useEffect(() => {
+    if (!archiveNotice) return;
+    setNoticeShown(archiveNotice.at);
+    const t = setTimeout(() => setNoticeShown(null), 6000);
+    return () => clearTimeout(t);
+  }, [archiveNotice]);
+
+  const handlePickSession = useCallback((agentId: number) => {
+    setIsSessionsOpen(false);
     getOfficeState().selectAndFollow(agentId);
   }, []);
 
@@ -641,7 +703,22 @@ function App() {
           onEditDirectory={directoryEditor.edit}
           terminalAvailable={terminalAvailable}
           terminalUnavailableReason={terminalUnavailableReason}
+          onOpenSessions={() => setIsSessionsOpen(true)}
         />
+      )}
+
+      {/* mptl fork: the Phiên table only reads, so a view-only desktop office
+          (no toolbar) still gets it at the toolbar's spot. */}
+      {!isMobile && officeReadOnly && !isDebugMode && (
+        <div className="absolute left-10 bottom-10 z-20 pixel-panel p-4">
+          <Button
+            onClick={() => setIsSessionsOpen(true)}
+            title="Danh sách phiên"
+            data-testid="sessions-button"
+          >
+            Phiên
+          </Button>
+        </div>
       )}
 
       {/* Mobile: Settings floats top-left (the layout editor stays desktop-
@@ -755,6 +832,8 @@ function App() {
                 statusFor={terminalDrawer.statusFor}
                 onSelect={handleCardSelect}
                 onClose={handleCloseAgent}
+                infoFor={sessionInfoFor}
+                onArchive={officeReadOnly ? undefined : requestArchive}
               />
             )
           )}
@@ -765,6 +844,30 @@ function App() {
           office region it would sit in the mobile shell's transformed track,
           and a transformed ancestor is the containing block of position:
           fixed — the modal would size to the 200%-wide track. */}
+      <SessionsModal
+        isOpen={isSessionsOpen}
+        onClose={() => setIsSessionsOpen(false)}
+        rowsAt={sessionRowsAt}
+        onPick={handlePickSession}
+        onArchive={officeReadOnly ? undefined : (row) => requestArchive(row.id)}
+        archived={archivedSessions}
+        onRestore={officeReadOnly ? undefined : handleRestore}
+      />
+      <ArchiveConfirmModal
+        target={archiveTarget}
+        onCancel={() => setArchiveTarget(null)}
+        onConfirm={confirmArchive}
+      />
+      {archiveNotice && noticeShown === archiveNotice.at && (
+        <div
+          role="status"
+          className="fixed bottom-60 left-1/2 -translate-x-1/2 z-[70] bg-bg border-2 border-border shadow-pixel px-12 py-4 text-sm pointer-events-none"
+          style={{ color: archiveNotice.ok ? undefined : 'var(--color-status-error)' }}
+          data-testid="archive-notice"
+        >
+          {archiveNotice.text}
+        </div>
+      )}
       <Modal
         isOpen={isHooksInfoOpen}
         onClose={() => setIsHooksInfoOpen(false)}

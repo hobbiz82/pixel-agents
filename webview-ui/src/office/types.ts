@@ -254,6 +254,17 @@ export interface Character {
   contextTokens: number;
   /** Window `contextTokens` is measured against. */
   maxContextTokens: number;
+
+  // -- Session meta (mptl fork) --
+  /** Session facts: tool (Claude/Codex), name, pid + RAM (Claude only), status + since when. */
+  sessionMeta?: {
+    provider?: 'claude' | 'codex';
+    pid?: number;
+    name?: string;
+    rssBytes?: number;
+    status?: string;
+    statusSince?: number;
+  };
 }
 
 export const PetState = { IDLE: 'idle', WALK: 'walk', FOLLOW: 'follow' } as const;
