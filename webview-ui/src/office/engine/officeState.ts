@@ -381,7 +381,14 @@ export class OfficeState {
     }
     if (freeSeats.length === 0) return null;
 
-    const areaLabels = directoryName ? this.areaMappings[directoryName] : undefined;
+    // mptl fork: with no saved mapping, an Area named exactly like the folder
+    // counts as its mapping (the bundled office ships rooms named per project).
+    const areaLabels = directoryName
+      ? (this.areaMappings[directoryName] ??
+        ((this.layout.areas ?? []).some((a) => a.label === directoryName)
+          ? [directoryName]
+          : undefined))
+      : undefined;
 
     // Stage 1 — in-area seats for the Directory's mapped Area labels.
     if (areaLabels && areaLabels.length > 0) {
