@@ -94,6 +94,28 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
+  // ── saveLayout (mptl fork: a generated office is never saved) ──
+
+  describe('saveLayout', () => {
+    const layoutFile = () => path.join(tempHome, '.pixel-agents', 'layout.json');
+    const layout = { version: 1, cols: 1, rows: 1, tiles: [0], furniture: [] };
+
+    it('writes a hand-made layout to ~/.pixel-agents/layout.json', () => {
+      handleClientMessage({ type: 'saveLayout', layout }, (m) => sent.push(m), ctx);
+      expect(JSON.parse(fs.readFileSync(layoutFile(), 'utf8'))).toEqual(layout);
+    });
+
+    it('refuses a generated (one room per project) office and keeps the saved file', () => {
+      handleClientMessage({ type: 'saveLayout', layout }, (m) => sent.push(m), ctx);
+      handleClientMessage(
+        { type: 'saveLayout', layout: { ...layout, cols: 2, generated: 'projects' } },
+        (m) => sent.push(m),
+        ctx,
+      );
+      expect(JSON.parse(fs.readFileSync(layoutFile(), 'utf8'))).toEqual(layout);
+    });
+  });
+
   // ── saveAreaMappings ─────────────────────────────────────────
 
   describe('saveAreaMappings', () => {

@@ -420,7 +420,10 @@ export function useExtensionMessages(
         const rawLayout = msg.layout as OfficeLayout | null;
         const layout = rawLayout && rawLayout.version === 1 ? migrateLayoutColors(rawLayout) : null;
         if (layout) {
-          os.rebuildFromLayout(layout);
+          // mptl fork: while the one-room-per-project office is up, a saved
+          // layout from the server only becomes the baseline shown when anh
+          // switches the rooms off — it does not replace the rooms on screen.
+          if (os.getLayout().generated !== 'projects') os.rebuildFromLayout(layout);
           onLayoutLoaded?.(layout);
         } else {
           // Default layout — snapshot whatever OfficeState built

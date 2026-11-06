@@ -64,6 +64,7 @@ import type {
 } from '../types.js';
 import { CharacterState, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
+import { areaLabelSpots } from './areaLabels.js';
 import { getCharacterSprite } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 import { getPetSpriteData } from './petEntity.js';
@@ -237,6 +238,7 @@ export function renderAreaLabels(
   offsetX: number,
   offsetY: number,
   zoom: number,
+  placement: 'middle' | 'top' = 'middle',
 ): void {
   if (!areaTiles || areaTiles.length === 0) return;
   if (!areas || areas.length === 0) return;
@@ -245,24 +247,8 @@ export function renderAreaLabels(
   const colorMap = new Map<string, string>();
   for (const a of areas) colorMap.set(a.label, a.color);
 
-  // Centroid accumulator: label → { sumX, sumY, count }.
-  const centroids = new Map<string, { sumX: number; sumY: number; count: number }>();
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const label = areaTiles[r * cols + c];
-      if (!label) continue;
-      const acc = centroids.get(label);
-      if (acc) {
-        acc.sumX += c;
-        acc.sumY += r;
-        acc.count += 1;
-      } else {
-        centroids.set(label, { sumX: c, sumY: r, count: 1 });
-      }
-    }
-  }
-
-  if (centroids.size === 0) return;
+  const spots = areaLabelSpots(areaTiles, areas, cols, rows, placement);
+  if (spots.length === 0) return;
 
   const fontSize = Math.max(AREA_LABEL_FONT_SIZE_PX * zoom, AREA_LABEL_MIN_FONT_SIZE_PX);
 
@@ -271,19 +257,19 @@ export function renderAreaLabels(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  for (const [label, acc] of centroids) {
-    const cx = offsetX + (acc.sumX / acc.count + 0.5) * s;
-    const cy = offsetY + (acc.sumY / acc.count + 0.5) * s;
+  for (const spot of spots) {
+    const cx = offsetX + spot.col * s;
+    const cy = offsetY + spot.row * s;
 
     // Pixel-art drop shadow (1px right + down, no blur).
     ctx.globalAlpha = AREA_LABEL_SHADOW_ALPHA;
     ctx.fillStyle = AREA_LABEL_SHADOW_COLOR;
-    ctx.fillText(label, cx + 1, cy + 1);
+    ctx.fillText(spot.text, cx + 1, cy + 1);
 
     // Main label — area's own color, falling back to white if missing.
     ctx.globalAlpha = AREA_LABEL_ALPHA;
-    ctx.fillStyle = colorMap.get(label) ?? AREA_LABEL_FALLBACK_COLOR;
-    ctx.fillText(label, cx, cy);
+    ctx.fillStyle = colorMap.get(spot.label) ?? AREA_LABEL_FALLBACK_COLOR;
+    ctx.fillText(spot.text, cx, cy);
   }
   ctx.restore();
 }
@@ -870,6 +856,8 @@ export function renderFrame(
   showAreas?: boolean,
   activeAreaLabel?: string | null,
   pets?: Pet[],
+  /** mptl fork: generated project office — always name the rooms (at the top). */
+  roomTitles?: boolean,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -935,8 +923,18 @@ export function renderFrame(
   }
 
   // Area labels (above bubbles + characters, below editor overlays)
-  if (showAreas) {
-    renderAreaLabels(ctx, areaTiles, areas, cols, rows, offsetX, offsetY, zoom);
+  if (showAreas || roomTitles) {
+    renderAreaLabels(
+      ctx,
+      areaTiles,
+      areas,
+      cols,
+      rows,
+      offsetX,
+      offsetY,
+      zoom,
+      roomTitles ? 'top' : 'middle',
+    );
   }
 
   // Editor overlays

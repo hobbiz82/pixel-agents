@@ -44,6 +44,10 @@ interface SessionsModalProps {
   onRestore?: (session: ArchivedSession) => void;
   /** Bỏ vào Thùng rác for the picked archived sessions (opens the confirm). */
   onDeleteArchived?: (sessions: ArchivedSession[]) => void;
+  /** mptl fork (Đ2): room names of the one-room-per-project office; with
+   *  `onRenameRoom`, each project group gets a ✎ to rename its room. */
+  roomTitles?: Record<string, string>;
+  onRenameRoom?: (project: string, title: string) => void;
 }
 
 const ARCHIVED_AT = new Intl.DateTimeFormat('vi-VN', {
@@ -107,6 +111,8 @@ export function SessionsModal({
   archived = [],
   onRestore,
   onDeleteArchived,
+  roomTitles = {},
+  onRenameRoom,
 }: SessionsModalProps) {
   const now = useNow(isOpen);
   const [tab, setTab] = useState<'live' | 'archived'>('live');
@@ -396,6 +402,13 @@ export function SessionsModal({
                             />
                           )}
                           {g.label} ({g.rows.length})
+                          {onRenameRoom && g.project && (
+                            <RoomTitle
+                              project={g.project}
+                              title={roomTitles[g.project] ?? ''}
+                              onSave={(t) => onRenameRoom(g.project, t)}
+                            />
+                          )}
                         </span>
                       </td>
                     </tr>
@@ -488,6 +501,56 @@ export function SessionsModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+/** "Phòng: <name> ✎" on a project group; ✎ turns it into a field (Enter saves,
+ *  Esc cancels, empty = back to the project name). */
+function RoomTitle({
+  project,
+  title,
+  onSave,
+}: {
+  project: string;
+  title: string;
+  onSave: (title: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  if (draft === null) {
+    return (
+      <span className="text-sm text-text-muted flex items-center gap-4">
+        · Phòng: {title || project}
+        <button
+          onClick={() => setDraft(title || project)}
+          className="bg-transparent border-none p-0 text-text-muted hover:text-text cursor-pointer"
+          aria-label={`Đổi tên phòng của ${project}`}
+          title="Đổi tên phòng"
+          data-testid="room-rename"
+        >
+          ✎
+        </button>
+      </span>
+    );
+  }
+  const save = () => {
+    onSave(draft === project ? '' : draft);
+    setDraft(null);
+  };
+  return (
+    <input
+      autoFocus
+      value={draft}
+      maxLength={40}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') save();
+        if (e.key === 'Escape') setDraft(null);
+      }}
+      onBlur={save}
+      aria-label={`Tên phòng của ${project}`}
+      className="px-4 py-1 bg-btn-bg border-2 border-border text-text text-sm outline-none w-[200px]"
+      data-testid="room-rename-input"
+    />
   );
 }
 

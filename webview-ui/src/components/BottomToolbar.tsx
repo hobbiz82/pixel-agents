@@ -9,6 +9,8 @@ import { Button } from './ui/Button.js';
 interface BottomToolbarProps {
   isEditMode: boolean;
   onToggleEditMode: () => void;
+  /** mptl fork: why the layout editor is off right now (rooms per project). */
+  layoutDisabledReason?: string | null;
   isSettingsOpen: boolean;
   onToggleSettings: () => void;
   directories: Directory[];
@@ -27,6 +29,7 @@ interface BottomToolbarProps {
 export function BottomToolbar({
   isEditMode,
   onToggleEditMode,
+  layoutDisabledReason,
   isSettingsOpen,
   onToggleSettings,
   directories,
@@ -119,13 +122,25 @@ export function BottomToolbar({
           Phiên
         </Button>
       )}
-      <Button
-        variant={isEditMode ? 'active' : 'default'}
-        onClick={onToggleEditMode}
-        title="Edit office layout"
-      >
-        Layout
-      </Button>
+      {layoutDisabledReason ? (
+        <Button
+          variant="disabled"
+          disabled
+          title={layoutDisabledReason}
+          data-testid="layout-button"
+        >
+          Layout
+        </Button>
+      ) : (
+        <Button
+          variant={isEditMode ? 'active' : 'default'}
+          onClick={onToggleEditMode}
+          title="Edit office layout"
+          data-testid="layout-button"
+        >
+          Layout
+        </Button>
+      )}
       <Button
         variant={isSettingsOpen ? 'active' : 'default'}
         onClick={onToggleSettings}
