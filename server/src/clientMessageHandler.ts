@@ -1,3 +1,5 @@
+import * as os from 'node:os';
+
 import type { StateAdapter } from '../../core/src/adapter.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
@@ -30,8 +32,11 @@ import {
   archiveSession,
   defaultArchiveIO,
   foldArchiveLog,
+  MAX_STOP,
   restoreSession,
 } from './sessionArchive.js';
+import { defaultInspectIO, type InspectIO, inspectSession } from './sessionInspect.js';
+import { defaultTrashIO, MAX_TRASH, trashArchived, type TrashIO } from './sessionTrash.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
@@ -84,6 +89,10 @@ export interface ClientMessageContext {
   /** Session archive side effects (mptl fork). Tests inject a fake; default
    *  acts on this machine (sessionArchive.defaultArchiveIO). */
   archiveIO?: ArchiveIO;
+  /** Read-only look at a session before archiving it (mptl fork). */
+  inspectIO?: InspectIO;
+  /** Moves archived session history to the macOS Trash (mptl fork). */
+  trashIO?: TrashIO;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -192,6 +201,14 @@ export function handleClientMessage(
 
     case 'restoreSession':
       handleRestoreSession(msg, send, ctx);
+      break;
+
+    case 'inspectSession':
+      handleInspectSession(msg, send, ctx);
+      break;
+
+    case 'deleteArchived':
+      handleDeleteArchived(msg, send, ctx);
       break;
 
     case 'requestDiagnostics':
@@ -484,7 +501,13 @@ function handleArchiveSession(
   const io = ctx.archiveIO ?? defaultArchiveIO();
   const folder = typeof msg.folder === 'string' ? msg.folder.slice(0, 200) : undefined;
   void archiveSession(
-    { sessionId: agent.sessionId, folder, file: agent.jsonlFile, meta: agent.sessionMeta },
+    {
+      sessionId: agent.sessionId,
+      folder,
+      file: agent.jsonlFile,
+      meta: agent.sessionMeta,
+      stop: parseStopList(msg.stop),
+    },
     io,
   )
     .then(async (out) => {
@@ -500,6 +523,7 @@ function handleArchiveSession(
         ok: true,
         provider: out.entry.provider,
         sessionId: out.entry.sessionId,
+        ...(out.stopped ? { stopped: out.stopped } : {}),
       });
       ctx.store.broadcast({
         type: 'archivedSessions',
@@ -510,6 +534,102 @@ function handleArchiveSession(
       console.error('[Pixel Agents] archiveSession failed:', err);
       send({ type: 'sessionArchiveResult', id, ok: false, reason: 'failed' });
     });
+}
+
+/** `stop` from the office: well-formed {pid, start} entries only, capped. */
+function parseStopList(raw: unknown): { pid: number; start: string }[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: { pid: number; start: string }[] = [];
+  for (const v of raw) {
+    if (!v || typeof v !== 'object') continue;
+    const { pid, start } = v as { pid?: unknown; start?: unknown };
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 1) continue;
+    if (typeof start !== 'string' || start.length > 40) continue;
+    out.push({ pid, start });
+    if (out.length >= MAX_STOP) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * mptl fork: read-only look at one session for the Lưu trữ confirm — what it
+ * started, git state, last prompt / reply (sessionInspect.ts). Tokened offices
+ * only (the read-only gate refuses it before this runs).
+ */
+function handleInspectSession(
+  msg: Record<string, unknown>,
+  send: WsSend,
+  ctx: ClientMessageContext,
+): void {
+  const id = msg.id as number;
+  const agent = ctx.store.get(id);
+  const meta = agent?.sessionMeta;
+  if (!agent || (meta?.provider !== 'claude' && meta?.provider !== 'codex')) {
+    send({ type: 'sessionInspection', id, ok: false });
+    return;
+  }
+  const otherCwds: string[] = [];
+  for (const [otherId, other] of ctx.store) {
+    if (otherId !== id && other.sessionMeta?.cwd) otherCwds.push(other.sessionMeta.cwd);
+  }
+  void inspectSession(
+    { provider: meta.provider, pid: meta.pid, cwd: meta.cwd, file: agent.jsonlFile, otherCwds },
+    ctx.inspectIO ?? defaultInspectIO(),
+  )
+    .then((r) => send({ type: 'sessionInspection', id, ok: true, ...r }))
+    .catch((err: unknown) => {
+      console.error('[Pixel Agents] inspectSession failed:', err);
+      send({ type: 'sessionInspection', id, ok: false });
+    });
+}
+
+/**
+ * mptl fork: move the history of ARCHIVED sessions to the macOS Trash
+ * (sessionTrash.ts). Ids not in the archived list are refused, so a running
+ * session can never be targeted from here.
+ */
+function handleDeleteArchived(
+  msg: Record<string, unknown>,
+  send: WsSend,
+  ctx: ClientMessageContext,
+): void {
+  const ids = Array.isArray(msg.sessionIds)
+    ? [...new Set(msg.sessionIds.filter((x): x is string => typeof x === 'string'))].slice(
+        0,
+        MAX_TRASH,
+      )
+    : [];
+  const io = ctx.archiveIO ?? defaultArchiveIO();
+  const trash = ctx.trashIO ?? defaultTrashIO();
+  void (async () => {
+    const archived = new Map(foldArchiveLog(await io.readLog()).map((e) => [e.sessionId, e]));
+    let ok = 0;
+    let items = 0;
+    const refused: Record<string, number> = {};
+    for (const sid of ids) {
+      const entry = archived.get(sid);
+      const out = entry
+        ? await trashArchived(entry, os.homedir(), trash)
+        : ({ ok: false, reason: 'unknown' } as const);
+      if (out.ok) {
+        ok++;
+        items += out.items;
+      } else {
+        refused[out.reason] = (refused[out.reason] ?? 0) + 1;
+      }
+    }
+    send({ type: 'archivedDeleteResult', total: ids.length, ok, items, refused });
+    ctx.store.broadcast({ type: 'archivedSessions', sessions: foldArchiveLog(await io.readLog()) });
+  })().catch((err: unknown) => {
+    console.error('[Pixel Agents] deleteArchived failed:', err);
+    send({
+      type: 'archivedDeleteResult',
+      total: ids.length,
+      ok: 0,
+      items: 0,
+      refused: { failed: ids.length },
+    });
+  });
 }
 
 /** Restore by session id; the tool comes from the archive log, never the client. */

@@ -9,6 +9,8 @@ import { type ClientMessageContext, handleClientMessage } from '../src/clientMes
 import { FileStateAdapter } from '../src/fileStateAdapter.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 import type { ArchiveIO, ArchiveLogEvent } from '../src/sessionArchive.js';
+import type { InspectIO } from '../src/sessionInspect.js';
+import type { TrashIO } from '../src/sessionTrash.js';
 import type { AgentState, SessionMeta } from '../src/types.js';
 
 const START = 'Fri Oct 23 11:05:24 2026';
@@ -55,9 +57,22 @@ describe('archiveSession / restoreSession messages', () => {
   let broadcasts: Array<Record<string, unknown>>;
   let calls: { signals: number[]; codex: string[][]; log: ArchiveLogEvent[] };
   let io: ArchiveIO;
+  let inspectIO: InspectIO;
+  let inspected: string[] = [];
+  let trashIO: TrashIO;
+  let trashed: string[][];
 
   function ctx(overrides: Partial<ClientMessageContext> = {}): ClientMessageContext {
-    return { store, runtime, cache: null, privileged: true, archiveIO: io, ...overrides };
+    return {
+      store,
+      runtime,
+      cache: null,
+      privileged: true,
+      archiveIO: io,
+      inspectIO,
+      trashIO,
+      ...overrides,
+    };
   }
 
   function dispatch(msg: Record<string, unknown>, context = ctx()): void {
@@ -89,6 +104,32 @@ describe('archiveSession / restoreSession messages', () => {
       },
       readLog: async () => calls.log,
       now: () => 1_000,
+      verifyStops: async (_pid, picked) => picked.map((x) => x.pid),
+    };
+    inspectIO = {
+      ps: async () => '',
+      listening: async () => '',
+      established: async () => '',
+      launchdPids: async () => '',
+      cwds: async () => '',
+      git: async (cwd) => {
+        inspected.push(cwd);
+        return '# branch.head main\n? a\n';
+      },
+      tail: async () => JSON.stringify({ type: 'user', message: { content: 'Hỏi cuối' } }),
+    };
+    trashed = [];
+    trashIO = {
+      kind: async () => 'file',
+      list: async () => [],
+      isLive: async (sid) => sid === 'live-again',
+      trash: async (paths) => {
+        trashed.push(paths);
+      },
+      appendLog: async (e) => {
+        calls.log.push(e);
+      },
+      now: () => 2_000,
     };
   });
 
@@ -207,5 +248,95 @@ describe('archiveSession / restoreSession messages', () => {
     dispatch({ type: 'webviewReady' }, ctx({ privileged: false }));
     await settle();
     expect(sent.some((m) => m.type === 'archivedSessions')).toBe(false);
+  });
+
+  it('inspects a session for the confirm: git and last message, tokened office only', async () => {
+    store.set(5, agent(5, 's1', { provider: 'claude', pid: 4242, status: 'idle', cwd: '/u/kho' }));
+    dispatch({ type: 'inspectSession', id: 5 });
+    await settle();
+    expect(inspected).toEqual(['/u/kho']);
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: 'sessionInspection',
+        id: 5,
+        ok: true,
+        git: { branch: 'main', changed: 1, unpushed: null },
+        lastPrompt: 'Hỏi cuối',
+        processes: [],
+      }),
+    );
+
+    sent = [];
+    dispatch({ type: 'inspectSession', id: 5 }, ctx({ privileged: false }));
+    await settle();
+    expect(sent.some((m) => m.type === 'sessionInspection')).toBe(false);
+  });
+
+  it('an unknown agent gets an inspection refusal', async () => {
+    dispatch({ type: 'inspectSession', id: 77 });
+    await settle();
+    expect(sent).toContainEqual({ type: 'sessionInspection', id: 77, ok: false });
+  });
+
+  it('archive passes only well-formed stop entries and reports what was stopped', async () => {
+    store.set(5, agent(5, 's1', { provider: 'claude', pid: 4242, status: 'idle' }));
+    const T = 'Fri Oct 23 12:00:00 2026';
+    dispatch({
+      type: 'archiveSession',
+      id: 5,
+      stop: [
+        { pid: 900, start: T },
+        { pid: -1, start: T },
+        { pid: 901 },
+        'x',
+        { pid: 902, start: T },
+      ],
+    });
+    await settle();
+    expect(calls.signals).toEqual([900, 902, 4242]);
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: 'sessionArchiveResult',
+        id: 5,
+        ok: true,
+        stopped: { done: 2, skipped: 0 },
+      }),
+    );
+  });
+
+  it('deletes archived sessions to the Trash, refuses live and unknown ones', async () => {
+    const sid = '0a1b2c3d-1111-2222-3333-444455556666';
+    calls.log.push(
+      {
+        kind: 'archived',
+        sessionId: sid,
+        provider: 'claude',
+        file: `${os.homedir()}/.claude/projects/-u-kho/${sid}.jsonl`,
+        archivedAt: 1,
+      },
+      { kind: 'archived', sessionId: 'live-again', provider: 'codex', archivedAt: 1 },
+    );
+    dispatch({ type: 'deleteArchived', sessionIds: [sid, 'live-again', 'never-archived'] });
+    await settle();
+    expect(trashed).toHaveLength(1);
+    expect(sent).toContainEqual({
+      type: 'archivedDeleteResult',
+      total: 3,
+      ok: 1,
+      items: trashed[0].length,
+      refused: { live: 1, unknown: 1 },
+    });
+    const list = broadcasts.filter((m) => m.type === 'archivedSessions').pop();
+    expect((list?.sessions as { sessionId: string }[]).map((e) => e.sessionId)).toEqual([
+      'live-again',
+    ]);
+  });
+
+  it('a read-only office cannot delete', async () => {
+    calls.log.push({ kind: 'archived', sessionId: 'c1', provider: 'codex', archivedAt: 1 });
+    dispatch({ type: 'deleteArchived', sessionIds: ['c1'] }, ctx({ privileged: false }));
+    await settle();
+    expect(trashed).toEqual([]);
+    expect(sent.some((m) => m.type === 'archivedDeleteResult')).toBe(false);
   });
 });

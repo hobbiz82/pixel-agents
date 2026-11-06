@@ -102,6 +102,7 @@ export function buildSessionMetas(
     };
     const project = projectOfCwd(rec.cwd);
     if (project) meta.project = project;
+    if (rec.cwd) meta.cwd = rec.cwd;
     metas.set(sessionId, meta);
   }
   return metas;
@@ -124,13 +125,14 @@ export function codexMeta(s: CodexSession): SessionMeta {
   if (s.statusSince !== undefined) meta.statusSince = s.statusSince;
   const project = projectOfCwd(s.cwd);
   if (project) meta.project = project;
+  if (s.cwd) meta.cwd = s.cwd;
   return meta;
 }
 
 export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
   if (!a) return false;
   if (a.provider !== b.provider || a.pid !== b.pid || a.name !== b.name) return false;
-  if (a.project !== b.project) return false;
+  if (a.project !== b.project || a.cwd !== b.cwd) return false;
   if (a.status !== b.status || a.statusSince !== b.statusSince) return false;
   if (a.rssBytes === undefined || b.rssBytes === undefined) return a.rssBytes === b.rssBytes;
   const base = Math.max(a.rssBytes, 1);
@@ -145,7 +147,9 @@ export interface SessionMetaIO {
 }
 
 export function sessionMetaMessage(id: number, meta: SessionMeta): Record<string, unknown> {
-  return { type: 'agentSessionMeta', id, ...meta };
+  // The folder path stays on the server: offices get the project name only.
+  const { cwd: _cwd, ...shown } = meta;
+  return { type: 'agentSessionMeta', id, ...shown };
 }
 
 export class SessionMetaPoller {

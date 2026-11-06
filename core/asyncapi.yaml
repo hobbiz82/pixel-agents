@@ -106,6 +106,8 @@ components:
         - $ref: '#/components/schemas/ArchivedSessions'
         - $ref: '#/components/schemas/SessionArchiveResult'
         - $ref: '#/components/schemas/SessionRestoreResult'
+        - $ref: '#/components/schemas/SessionInspection'
+        - $ref: '#/components/schemas/ArchivedDeleteResult'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -166,6 +168,8 @@ components:
         - $ref: '#/components/schemas/RequestDiagnostics'
         - $ref: '#/components/schemas/ArchiveSession'
         - $ref: '#/components/schemas/RestoreSession'
+        - $ref: '#/components/schemas/InspectSession'
+        - $ref: '#/components/schemas/DeleteArchived'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -562,6 +566,103 @@ components:
           $ref: '#/components/schemas/SessionProvider'
         sessionId:
           type: string
+        stopped:
+          description: Processes anh ticked to stop with the session; skipped = gone or failed a re-check.
+          type: object
+          additionalProperties: false
+          required: [done, skipped]
+          properties:
+            done:
+              type: integer
+            skipped:
+              type: integer
+
+    SessionInspection:
+      description: |
+        mptl fork. Reply to inspectSession, to the asking client only: what the
+        session started (Claude), git state of its folder, last prompt / reply.
+        gitError when git could not be read: not_repo, blocked (macOS privacy)
+        or failed.
+      type: object
+      additionalProperties: false
+      required: [type, id, ok]
+      properties:
+        type:
+          const: sessionInspection
+        id:
+          type: integer
+        ok:
+          type: boolean
+        processes:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionProcess'
+        mcpCount:
+          type: integer
+        git:
+          type: object
+          additionalProperties: false
+          required: [branch, changed, unpushed]
+          properties:
+            branch:
+              type: string
+            changed:
+              type: integer
+            unpushed:
+              type: [integer, 'null']
+        gitError:
+          type: string
+        lastPrompt:
+          type: string
+        lastReply:
+          type: string
+
+    SessionProcess:
+      description: mptl fork. One process a session started (or likely left behind).
+      type: object
+      additionalProperties: false
+      required: [pid, start, name, ports, inbound, orphan, suggest]
+      properties:
+        pid:
+          type: integer
+        start:
+          type: string
+        name:
+          type: string
+        ports:
+          type: array
+          items:
+            type: integer
+        inbound:
+          type: integer
+        orphan:
+          type: boolean
+        suggest:
+          type: boolean
+        note:
+          type: string
+
+    ArchivedDeleteResult:
+      description: |
+        mptl fork. Reply to deleteArchived: how many sessions had their history
+        moved to the macOS Trash, how many files/folders moved, and refusals by
+        reason (live, unknown, failed).
+      type: object
+      additionalProperties: false
+      required: [type, total, ok, items, refused]
+      properties:
+        type:
+          const: archivedDeleteResult
+        total:
+          type: integer
+        ok:
+          type: integer
+        items:
+          type: integer
+        refused:
+          type: object
+          additionalProperties:
+            type: integer
 
     SessionRestoreResult:
       description: mptl fork. Reply to restoreSession, to the asking client only.
@@ -1457,6 +1558,44 @@ components:
           type: integer
         folder:
           type: string
+        stop:
+          description: Processes to stop with the session (from sessionInspection); re-checked server side.
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [pid, start]
+            properties:
+              pid:
+                type: integer
+              start:
+                type: string
+
+    InspectSession:
+      description: mptl fork. Ask what one agent's session started and its git state (read-only).
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: inspectSession
+        id:
+          type: integer
+
+    DeleteArchived:
+      description: |
+        mptl fork. Move the history of these ARCHIVED sessions to the macOS
+        Trash. Ids not in the archive log are refused.
+      type: object
+      additionalProperties: false
+      required: [type, sessionIds]
+      properties:
+        type:
+          const: deleteArchived
+        sessionIds:
+          type: array
+          items:
+            type: string
 
     RestoreSession:
       description: |

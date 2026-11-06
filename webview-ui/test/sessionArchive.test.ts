@@ -187,3 +187,15 @@ describe('bulk tally', () => {
     expect(inTally(null, 4)).toBe(false);
   });
 });
+
+describe('archive result with stopped processes', () => {
+  it('says how many processes were stopped with the session', () => {
+    expect(archiveResultText({ ok: true, stopped: { done: 2, skipped: 0 } })).toBe(
+      'Đã lưu trữ phiên, tắt 2 tiến trình.',
+    );
+    expect(archiveResultText({ ok: true, stopped: { done: 1, skipped: 1 } })).toBe(
+      'Đã lưu trữ phiên, tắt 1 tiến trình (1 tiến trình đã đổi nên không tắt).',
+    );
+    expect(archiveResultText({ ok: true })).toBe('Đã lưu trữ phiên.');
+  });
+});

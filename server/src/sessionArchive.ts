@@ -8,6 +8,9 @@
  *   ~/.claude/sessions/<pid>.json (same sessionId), matching the process start
  *   time to the record's procStart (pid not reused) and checking the binary is
  *   claude. Never SIGKILL, never a process group.
+ *   Processes the session started that anh ticked in the confirm are re-checked
+ *   (sessionInspect.verifyStopTargets: same pid and start time, still in the
+ *   session tree or orphaned, never launchd-run) and get SIGTERM first.
  * - Codex: `codex archive <id>` / `codex unarchive <id>` via execFile (no shell).
  *
  * Every successful action is appended to ~/.pixel-agents/session-archive.jsonl;
@@ -20,6 +23,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { LAYOUT_FILE_DIR } from './constants.js';
+import {
+  defaultInspectIO,
+  parseLaunchctl,
+  parsePsRows,
+  verifyStopTargets,
+} from './sessionInspect.js';
 import type { SessionMeta } from './types.js';
 
 export type ArchiveProvider = 'claude' | 'codex';
@@ -33,7 +42,12 @@ export interface ArchiveTarget {
   /** Transcript the character watched; lets a restore lift its X-close dismissal. */
   file?: string;
   meta?: SessionMeta;
+  /** Processes anh ticked to stop with the session (Claude only). */
+  stop?: { pid: number; start: string }[];
 }
+
+/** Most processes one archive will try to stop. */
+export const MAX_STOP = 40;
 
 /** Fields of ~/.claude/sessions/<pid>.json this module trusts. */
 export interface ClaudeRecord {
@@ -58,7 +72,8 @@ export interface ArchivedEntry {
 
 export type ArchiveLogEvent =
   | ({ kind: 'archived' } & ArchivedEntry)
-  | { kind: 'restored'; sessionId: string; restoredAt: number };
+  | { kind: 'restored'; sessionId: string; restoredAt: number }
+  | { kind: 'deleted'; sessionId: string; deletedAt: number };
 
 export interface ArchiveIO {
   readClaudeRecord(pid: number): Promise<ClaudeRecord | null>;
@@ -69,10 +84,13 @@ export interface ArchiveIO {
   appendLog(event: ArchiveLogEvent): Promise<void>;
   readLog(): Promise<ArchiveLogEvent[]>;
   now(): number;
+  /** The picked processes that still pass the identity checks right now. */
+  verifyStops(sessionPid: number, picked: { pid: number; start: string }[]): Promise<number[]>;
 }
 
 export type ArchiveOutcome =
-  { ok: true; entry: ArchivedEntry } | { ok: false; reason: ArchiveReason };
+  | { ok: true; entry: ArchivedEntry; stopped?: { done: number; skipped: number } }
+  | { ok: false; reason: ArchiveReason };
 export type RestoreOutcome = { ok: true } | { ok: false; reason: ArchiveReason };
 
 /** Working sessions are never archived: `busy` = running a turn, `waiting` = asking anh. */
@@ -101,12 +119,32 @@ async function stopClaude(target: ArchiveTarget, io: ArchiveIO): Promise<Archive
   if (!start || !sameStart(start, rec.procStart) || !name || !/claude/i.test(path.basename(name))) {
     return { ok: false, reason: 'process_changed' };
   }
+  let stopped: { done: number; skipped: number } | undefined;
+  if (target.stop && target.stop.length > 0) {
+    const picked = target.stop.slice(0, MAX_STOP);
+    const ok = await io.verifyStops(pid, picked).catch(() => [] as number[]);
+    let done = 0;
+    for (const child of ok) {
+      try {
+        io.signal(child);
+        done++;
+      } catch {
+        // already gone or not ours to signal: counted as skipped
+      }
+    }
+    stopped = { done, skipped: target.stop.length - done };
+  }
   try {
     io.signal(pid);
   } catch {
     return { ok: false, reason: 'failed' };
   }
-  return { ok: true, entry: entryFor(target, 'claude', io.now(), rec.entrypoint) };
+  const out: ArchiveOutcome = {
+    ok: true,
+    entry: entryFor(target, 'claude', io.now(), rec.entrypoint),
+  };
+  if (stopped) out.stopped = stopped;
+  return out;
 }
 
 function entryFor(
@@ -183,7 +221,7 @@ export function foldArchiveLog(events: ArchiveLogEvent[]): ArchivedEntry[] {
       const { kind: _kind, ...entry } = e;
       current.delete(e.sessionId);
       current.set(e.sessionId, entry);
-    } else if (e.kind === 'restored') {
+    } else if (e.kind === 'restored' || e.kind === 'deleted') {
       current.delete(e.sessionId);
     }
   }
@@ -287,5 +325,14 @@ export function defaultArchiveIO(home: string = os.homedir()): ArchiveIO {
       return out;
     },
     now: () => Date.now(),
+    verifyStops: async (sessionPid, picked) => {
+      const inspect = defaultInspectIO();
+      const [ps, launchd] = await Promise.all([inspect.ps(), inspect.launchdPids()]);
+      return verifyStopTargets(picked, {
+        sessionPid,
+        rows: parsePsRows(ps),
+        launchd: parseLaunchctl(launchd),
+      });
+    },
   };
 }

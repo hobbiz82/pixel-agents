@@ -337,6 +337,7 @@ describe('SessionMetaPoller with Codex sessions', () => {
       provider: 'codex',
       name: 'Hub — quyền',
       project: 'novaceu-hub',
+      cwd: '/Users/seb/novaceu-hub',
       status: 'idle',
       statusSince: 5,
     });

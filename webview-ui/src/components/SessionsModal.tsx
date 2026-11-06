@@ -42,6 +42,8 @@ interface SessionsModalProps {
   onBulkArchive?: (rows: SessionRow[]) => void;
   archived?: ArchivedSession[];
   onRestore?: (session: ArchivedSession) => void;
+  /** Bỏ vào Thùng rác for the picked archived sessions (opens the confirm). */
+  onDeleteArchived?: (sessions: ArchivedSession[]) => void;
 }
 
 const ARCHIVED_AT = new Intl.DateTimeFormat('vi-VN', {
@@ -104,6 +106,7 @@ export function SessionsModal({
   onBulkArchive,
   archived = [],
   onRestore,
+  onDeleteArchived,
 }: SessionsModalProps) {
   const now = useNow(isOpen);
   const [tab, setTab] = useState<'live' | 'archived'>('live');
@@ -348,7 +351,7 @@ export function SessionsModal({
       )}
       <div className="overflow-x-auto max-w-full">
         {showArchived ? (
-          <ArchivedTable archived={archived} onRestore={onRestore} />
+          <ArchivedTable archived={archived} onRestore={onRestore} onDelete={onDeleteArchived} />
         ) : rows.length === 0 ? (
           <p className="text-sm text-text-muted px-6 py-8 m-0" data-testid="sessions-empty">
             Không có phiên nào khớp bộ lọc.
@@ -522,10 +525,24 @@ function PickBox({
 function ArchivedTable({
   archived,
   onRestore,
+  onDelete,
 }: {
   archived: ArchivedSession[];
   onRestore?: (session: ArchivedSession) => void;
+  onDelete?: (sessions: ArchivedSession[]) => void;
 }) {
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const present = archived.filter((s) => picked.has(s.sessionId));
+  const toggle = (ids: string[]) =>
+    setPicked((prev) => {
+      const next = new Set([...prev].filter((id) => archived.some((s) => s.sessionId === id)));
+      const allOn = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (allOn) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
   if (archived.length === 0) {
     return (
       <p className="text-sm text-text-muted px-6 py-8 m-0" data-testid="archived-empty">
@@ -534,71 +551,116 @@ function ArchivedTable({
     );
   }
   return (
-    <table className="text-sm border-collapse" data-testid="archived-table">
-      <thead>
-        <tr className="text-text-muted text-left">
-          <th className="py-2 px-6 font-normal">Phiên</th>
-          <th className="py-2 px-6 font-normal">Công cụ</th>
-          <th className="py-2 px-6 font-normal">Thư mục</th>
-          <th className="py-2 px-6 font-normal">Lưu lúc</th>
-          <th className="py-2 px-6 font-normal">Mở lại</th>
-        </tr>
-      </thead>
-      <tbody>
-        {archived.map((s) => {
-          const tag = providerTag(s);
-          const hint = restoreHint(s);
-          return (
-            <tr key={s.sessionId} className="border-t border-border" data-testid="archived-row">
-              <td className="py-3 px-6 text-text max-w-[300px] truncate">
-                {s.name || s.folder || s.sessionId}
-              </td>
-              <td className="py-3 px-6 whitespace-nowrap">
-                {tag && <span style={{ color: tag.color }}>{tag.label}</span>}
-              </td>
-              <td className="py-3 px-6 text-text-muted whitespace-nowrap">{s.folder || '—'}</td>
-              <td className="py-3 px-6 text-text-muted whitespace-nowrap">
-                {ARCHIVED_AT.format(s.archivedAt)}
-              </td>
-              <td className="py-2 px-6">
-                <div className="flex flex-col gap-2 items-start">
-                  <span className="text-xs text-text-muted">{hint.text}</span>
-                  {hint.command && (
-                    <span className="flex items-center gap-4">
-                      <code className="text-xs text-text select-all" data-testid="archived-command">
-                        {hint.command}
-                      </code>
+    <>
+      <table className="text-sm border-collapse" data-testid="archived-table">
+        <thead>
+          <tr className="text-text-muted text-left">
+            {onDelete && (
+              <th className="py-2 pl-6 font-normal">
+                <PickBox
+                  on={archived.every((s) => picked.has(s.sessionId))}
+                  some={present.length > 0}
+                  label="Chọn mọi phiên đã lưu trữ"
+                  onToggle={() => toggle(archived.map((s) => s.sessionId))}
+                  testId="archived-pick-all"
+                />
+              </th>
+            )}
+            <th className="py-2 px-6 font-normal">Phiên</th>
+            <th className="py-2 px-6 font-normal">Công cụ</th>
+            <th className="py-2 px-6 font-normal">Thư mục</th>
+            <th className="py-2 px-6 font-normal">Lưu lúc</th>
+            <th className="py-2 px-6 font-normal">Mở lại</th>
+          </tr>
+        </thead>
+        <tbody>
+          {archived.map((s) => {
+            const tag = providerTag(s);
+            const hint = restoreHint(s);
+            return (
+              <tr key={s.sessionId} className="border-t border-border" data-testid="archived-row">
+                {onDelete && (
+                  <td className="py-3 pl-6">
+                    <PickBox
+                      on={picked.has(s.sessionId)}
+                      label={`Chọn ${s.name || s.sessionId}`}
+                      onToggle={() => toggle([s.sessionId])}
+                      testId="archived-pick"
+                    />
+                  </td>
+                )}
+                <td className="py-3 px-6 text-text max-w-[300px] truncate">
+                  {s.name || s.folder || s.sessionId}
+                </td>
+                <td className="py-3 px-6 whitespace-nowrap">
+                  {tag && <span style={{ color: tag.color }}>{tag.label}</span>}
+                </td>
+                <td className="py-3 px-6 text-text-muted whitespace-nowrap">{s.folder || '—'}</td>
+                <td className="py-3 px-6 text-text-muted whitespace-nowrap">
+                  {ARCHIVED_AT.format(s.archivedAt)}
+                </td>
+                <td className="py-2 px-6">
+                  <div className="flex flex-col gap-2 items-start">
+                    <span className="text-xs text-text-muted">{hint.text}</span>
+                    {hint.command && (
+                      <span className="flex items-center gap-4">
+                        <code
+                          className="text-xs text-text select-all"
+                          data-testid="archived-command"
+                        >
+                          {hint.command}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Chép lệnh"
+                          onClick={() => copy(hint.command as string)}
+                        >
+                          Chép
+                        </Button>
+                      </span>
+                    )}
+                    {onRestore && (
                       <Button
-                        variant="ghost"
+                        variant="default"
                         size="sm"
-                        title="Chép lệnh"
-                        onClick={() => copy(hint.command as string)}
+                        title={
+                          s.provider === 'codex'
+                            ? 'Đưa luồng về Codex'
+                            : 'Bỏ khỏi danh sách này (phiên mở lại bằng app Claude hoặc lệnh trên)'
+                        }
+                        data-testid="archived-restore"
+                        onClick={() => onRestore(s)}
                       >
-                        Chép
+                        {s.provider === 'codex' ? 'Khôi phục' : 'Bỏ khỏi danh sách'}
                       </Button>
-                    </span>
-                  )}
-                  {onRestore && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      title={
-                        s.provider === 'codex'
-                          ? 'Đưa luồng về Codex'
-                          : 'Bỏ khỏi danh sách này (phiên mở lại bằng app Claude hoặc lệnh trên)'
-                      }
-                      data-testid="archived-restore"
-                      onClick={() => onRestore(s)}
-                    >
-                      {s.provider === 'codex' ? 'Khôi phục' : 'Bỏ khỏi danh sách'}
-                    </Button>
-                  )}
-                </div>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {onDelete && present.length > 0 && (
+        <div
+          className="sticky bottom-0 bg-bg border-t-2 border-border flex flex-wrap items-center gap-6 px-6 py-4 mt-4"
+          data-testid="archived-bulk-bar"
+        >
+          <span className="text-sm text-text">Đã chọn {present.length} phiên</span>
+          <Button
+            variant="accent"
+            size="sm"
+            onClick={() => onDelete(present)}
+            data-testid="archived-bulk-delete"
+          >
+            Bỏ vào Thùng rác…
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setPicked(new Set())}>
+            Bỏ chọn
+          </Button>
+        </div>
+      )}
+    </>
   );
 }

@@ -45,8 +45,18 @@ const ARCHIVE_REFUSAL: Record<string, string> = {
   unknown: 'Chưa lưu trữ: không tìm thấy phiên này.',
 };
 
-export function archiveResultText(r: { ok: boolean; reason?: string; provider?: string }): string {
-  if (r.ok) return 'Đã lưu trữ phiên.';
+export function archiveResultText(r: {
+  ok: boolean;
+  reason?: string;
+  provider?: string;
+  stopped?: { done: number; skipped: number };
+}): string {
+  if (r.ok) {
+    if (!r.stopped) return 'Đã lưu trữ phiên.';
+    const skipped =
+      r.stopped.skipped > 0 ? ` (${r.stopped.skipped} tiến trình đã đổi nên không tắt)` : '';
+    return `Đã lưu trữ phiên, tắt ${r.stopped.done} tiến trình${skipped}.`;
+  }
   return ARCHIVE_REFUSAL[r.reason ?? ''] ?? 'Không lưu trữ được, anh thử lại sau.';
 }
 

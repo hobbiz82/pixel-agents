@@ -21,6 +21,7 @@ import {
   tallyAdd,
   tallyDone,
 } from '../office/sessionArchive.js';
+import { deleteResultText, type Inspection, parseInspection } from '../office/sessionInspection.js';
 import { setCarpetSprites } from '../office/sprites/carpetTiles.js';
 import { setPetTemplates } from '../office/sprites/petSpriteData.js';
 import { setCharacterTemplates } from '../office/sprites/spriteData.js';
@@ -167,6 +168,8 @@ interface ExtensionMessageState {
   archivedSessions: ArchivedSession[];
   /** mptl fork: last archive/restore outcome, shown as a short notice. */
   archiveNotice: { ok: boolean; text: string; at: number } | null;
+  /** mptl fork: latest inspection per agent (for the Lưu trữ confirm). */
+  inspections: Record<number, Inspection>;
   /** Call before sending a bulk archive: its results then show as one running count. */
   startArchiveBatch: (ids: number[]) => void;
   // Terminal (standalone only; always false/empty under VS Code, which owns its
@@ -244,6 +247,7 @@ export function useExtensionMessages(
     text: string;
     at: number;
   } | null>(null);
+  const [inspections, setInspections] = useState<Record<number, Inspection>>({});
   // mptl fork: the bulk archive in flight, so its results add up to one notice.
   const batchRef = useRef<BulkTally | null>(null);
   const startArchiveBatch = useCallback((ids: number[]) => {
@@ -346,7 +350,32 @@ export function useExtensionMessages(
         }
         setArchiveNotice({
           ok,
-          text: archiveResultText({ ok, reason: msg.reason as string | undefined }),
+          text: archiveResultText({
+            ok,
+            reason: msg.reason as string | undefined,
+            stopped: msg.stopped as { done: number; skipped: number } | undefined,
+          }),
+          at: Date.now(),
+        });
+        return;
+      }
+
+      if (msg.type === 'sessionInspection') {
+        const insp = parseInspection(msg);
+        if (insp) setInspections((prev) => ({ ...prev, [insp.id]: insp }));
+        return;
+      }
+
+      if (msg.type === 'archivedDeleteResult') {
+        const r = {
+          total: Number(msg.total) || 0,
+          ok: Number(msg.ok) || 0,
+          items: Number(msg.items) || 0,
+          refused: (msg.refused as Record<string, number> | undefined) ?? {},
+        };
+        setArchiveNotice({
+          ok: r.ok === r.total,
+          text: deleteResultText(r),
           at: Date.now(),
         });
         return;
@@ -1000,6 +1029,7 @@ export function useExtensionMessages(
     officeReadOnly,
     archivedSessions,
     archiveNotice,
+    inspections,
     startArchiveBatch,
     terminalAvailable,
     terminalUnavailableReason,

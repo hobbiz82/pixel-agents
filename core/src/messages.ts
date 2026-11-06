@@ -29,6 +29,8 @@ export type ServerMessage =
   | ArchivedSessions
   | SessionArchiveResult
   | SessionRestoreResult
+  | SessionInspection
+  | ArchivedDeleteResult
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -81,7 +83,9 @@ export type ClientMessage =
   | RequestDirectorySuggestions
   | RequestDiagnostics
   | ArchiveSession
-  | RestoreSession;
+  | RestoreSession
+  | InspectSession
+  | DeleteArchived;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -244,6 +248,12 @@ export interface SessionArchiveResult {
   reason?: string;
   provider?: SessionProvider;
   sessionId?: string;
+  stopped?: AnonymousSchema_95;
+}
+
+export interface AnonymousSchema_95 {
+  done: number;
+  skipped: number;
 }
 
 export interface SessionRestoreResult {
@@ -251,6 +261,43 @@ export interface SessionRestoreResult {
   sessionId: string;
   ok: boolean;
   reason?: string;
+}
+
+export interface SessionInspection {
+  type: 'sessionInspection';
+  id: number;
+  ok: boolean;
+  processes?: SessionProcess[];
+  mcpCount?: number;
+  git?: AnonymousSchema_116;
+  gitError?: string;
+  lastPrompt?: string;
+  lastReply?: string;
+}
+
+export interface SessionProcess {
+  pid: number;
+  start: string;
+  name: string;
+  ports: number[];
+  inbound: number;
+  orphan: boolean;
+  suggest: boolean;
+  note?: string;
+}
+
+export interface AnonymousSchema_116 {
+  branch: string;
+  changed: number;
+  unpushed: number | null;
+}
+
+export interface ArchivedDeleteResult {
+  type: 'archivedDeleteResult';
+  total: number;
+  ok: number;
+  items: number;
+  refused: Record<string, number>;
 }
 
 export interface LayoutLoaded {
@@ -572,9 +619,25 @@ export interface ArchiveSession {
   type: 'archiveSession';
   id: number;
   folder?: string;
+  stop?: AnonymousSchema_328[];
+}
+
+export interface AnonymousSchema_328 {
+  pid: number;
+  start: string;
 }
 
 export interface RestoreSession {
   type: 'restoreSession';
   sessionId: string;
+}
+
+export interface InspectSession {
+  type: 'inspectSession';
+  id: number;
+}
+
+export interface DeleteArchived {
+  type: 'deleteArchived';
+  sessionIds: string[];
 }
