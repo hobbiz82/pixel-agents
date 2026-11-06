@@ -45,6 +45,7 @@ function buildHooks() {
   // self-contained CJS file, so one provider's script never depends on another's.
   const entries = [
     hookEntry('claude', 'claude-hook.ts'),
+    hookEntry('claude', 'claude-statusline.ts'),
     hookEntry('codex', 'codex-hook.ts'),
   ].filter((p) => fs.existsSync(p));
   if (entries.length === 0) return;

@@ -8,6 +8,8 @@
  * Each connecting WebSocket client receives the full state on webviewReady.
  */
 
+import { execFile } from 'node:child_process';
+
 import * as path from 'path';
 
 import { AgentRuntime } from './agentRuntime.js';
@@ -18,6 +20,7 @@ import {
   loadAllFurniture,
   loadAllPets,
 } from './assetReload.js';
+import { AssistHub } from './assist.js';
 import type { AssetCache, ReloadAssetsSideEffect } from './clientMessageHandler.js';
 import {
   getHooksConsent,
@@ -34,6 +37,12 @@ import {
 import { FileStateAdapter } from './fileStateAdapter.js';
 import { setLiveSessionSource } from './fileWatcher.js';
 import {
+  copyStatusLineScript,
+  installStatusLine,
+  statusLineState,
+  uninstallStatusLine,
+} from './providers/hook/claude/claudeHookInstaller.js';
+import {
   claudeProvider,
   codexProvider,
   copyCodexHookScript,
@@ -41,6 +50,7 @@ import {
   hookProviderById,
   hookProviders,
 } from './providers/index.js';
+import { QuotaPoller } from './quota.js';
 import { PixelAgentsServer } from './server.js';
 import { SessionMetaPoller } from './sessionMeta.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
@@ -148,6 +158,28 @@ Options:
  * Claude Code spawn a dead `node` process for every event, which is strictly
  * worse than no hooks at all.
  */
+/** mptl fork (Đ3): macOS notification. Title and body go in as osascript
+ *  arguments, never into the script text, so a session name cannot inject. */
+function macNotify(title: string, body: string): void {
+  execFile(
+    'osascript',
+    [
+      '-e',
+      'on run argv',
+      '-e',
+      'display notification (item 2 of argv) with title (item 1 of argv)',
+      '-e',
+      'end run',
+      title,
+      body,
+    ],
+    { timeout: 5000 },
+    () => {
+      // best-effort: a refused notification changes nothing
+    },
+  );
+}
+
 function copyHookScriptOrReport(packageRoot: string, context = ''): boolean {
   if (copyHookScript(packageRoot)) return true;
   console.error(`[Pixel Agents] Hooks NOT installed${context}: hook script missing.`);
@@ -263,6 +295,38 @@ async function main(): Promise<void> {
   // mptl fork: every running session gets a character, not only recently active ones.
   setLiveSessionSource(() => sessionMeta.liveSessions());
 
+  // mptl fork (Đ3): quota panel, permission prompts answered from the page,
+  // macOS notification when a session waits.
+  const assist = new AssistHub({
+    getSetting: (key, defaultValue) => adapter.getSetting(key, defaultValue),
+    setSetting: (key, value) => adapter.setSetting(key, value),
+    notify: process.platform === 'darwin' ? macNotify : undefined,
+  });
+  const quota = new QuotaPoller((message) =>
+    assist.setQuota({ ...message, claudeReader: statusLineState() }),
+  );
+  const onSetClaudeQuotaReader = async (enabled: boolean): Promise<void> => {
+    try {
+      if (enabled) {
+        if (!copyStatusLineScript(packageRoot)) {
+          console.error('[Pixel Agents] Status line NOT installed: script missing.');
+          return;
+        }
+        await installStatusLine();
+      } else {
+        await uninstallStatusLine();
+      }
+    } catch (err) {
+      console.error(`[Pixel Agents] ${err instanceof Error ? err.message : String(err)}`);
+    }
+    assist.setQuota({
+      ...(quota.snapshot() ?? { type: 'quotaStatus' }),
+      claudeReader: statusLineState(),
+    });
+  };
+  // Keep an installed writer current with this build.
+  if (statusLineState() === 'ours') copyStatusLineScript(packageRoot);
+
   // ── Create server ──
   const server = new PixelAgentsServer();
 
@@ -282,6 +346,17 @@ async function main(): Promise<void> {
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {
       runtime.handleHookEvent(providerId, event);
+      if (event.hook_event_name === 'PermissionRequest' && typeof event.session_id === 'string') {
+        let name: string | undefined;
+        for (const [, agent] of store) {
+          if (agent.sessionId === event.session_id) name = agent.sessionMeta?.name;
+        }
+        assist.notifyWaiting(
+          event.session_id,
+          name,
+          typeof event.tool_name === 'string' ? event.tool_name : undefined,
+        );
+      }
     });
 
     // onSetHooksEnabled side effect: install/uninstall the named provider's
@@ -374,6 +449,8 @@ async function main(): Promise<void> {
       ptyManager,
       allowedHosts: args.allowedHosts,
       rotateToken: args.rotateToken,
+      assist,
+      onSetClaudeQuotaReader,
     });
     currentConfig = { port: config.port, token: config.token };
     if (args.rotateToken) {
@@ -476,6 +553,7 @@ async function main(): Promise<void> {
     );
 
     sessionMeta.start();
+    quota.start();
 
     // ── Graceful shutdown ──
     let shuttingDown = false;
@@ -488,6 +566,7 @@ async function main(): Promise<void> {
       // leave a child that ignores SIGHUP orphaned on a dead server.
       await ptyManager.disposeAll();
       sessionMeta.stop();
+      quota.stop();
       runtime.dispose();
       server.stop();
       process.exit(0);

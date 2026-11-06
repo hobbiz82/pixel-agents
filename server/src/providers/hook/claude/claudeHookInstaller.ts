@@ -7,7 +7,9 @@ import { HOOK_SCRIPTS_DIR } from '../../../constants.js';
 import {
   CLAUDE_HOOK_EVENTS,
   CLAUDE_HOOK_SCRIPT_NAME,
+  CLAUDE_STATUSLINE_SCRIPT_NAME,
   LEGACY_HOOK_SCRIPT_NAME,
+  PERMISSION_HOOK_TIMEOUT_SECONDS,
   SETTINGS_BACKUP_SUFFIX,
   SETTINGS_FRESH_FILE_MODE,
   SETTINGS_MUTATE_ATTEMPTS,
@@ -532,15 +534,19 @@ function makeHookCommand(): string {
   return `node "${scriptPath}"`;
 }
 
-/** Create a hook entry object for Claude's settings.json. Matcher is empty (catch-all). */
-function makeHookEntry(): ClaudeHookEntry {
+/** Create a hook entry object for Claude's settings.json. Matcher is empty (catch-all).
+ *  mptl fork (Đ3): PermissionRequest gets PERMISSION_HOOK_TIMEOUT_SECONDS so the
+ *  script can wait for an answer from the page; it only waits when the server
+ *  holds the request (approve-from-page on and the page visible), otherwise
+ *  the server answers at once. */
+function makeHookEntry(event?: string): ClaudeHookEntry {
   return {
     matcher: '',
     hooks: [
       {
         type: 'command',
         command: makeHookCommand(),
-        timeout: 5,
+        timeout: event === 'PermissionRequest' ? PERMISSION_HOOK_TIMEOUT_SECONDS : 5,
       },
     ],
   };
@@ -666,7 +672,7 @@ function installEntries(): Promise<boolean> {
       }
       const entries = hooks[event];
       // Remove any existing Pixel Agents commands (in case the script path changed)
-      const filtered = (withoutOurEntries(entries) ?? entries).concat(makeHookEntry());
+      const filtered = (withoutOurEntries(entries) ?? entries).concat(makeHookEntry(event));
       if (JSON.stringify(filtered) !== JSON.stringify(entries)) {
         hooks[event] = filtered;
         changed = true;
@@ -718,6 +724,80 @@ export async function uninstallHooks(): Promise<void> {
   }
   if (wrote) {
     console.log('[Pixel Agents] Hooks removed from ~/.claude/settings.json');
+  }
+}
+
+// ── mptl fork (Đ3): status line writer for Claude usage limits ──────────────
+
+/** Claude Code shows its usage limits (rate_limits) only to a status line
+ *  command, so the quota panel needs ours installed. We install it only where
+ *  the user has no status line, and remove only ours. */
+export type StatusLineState = 'none' | 'ours' | 'other';
+
+function getStatusLineScriptPath(): string {
+  return path.join(os.homedir(), HOOK_SCRIPTS_DIR, CLAUDE_STATUSLINE_SCRIPT_NAME);
+}
+
+function statusLineStateOf(settings: ClaudeSettings): StatusLineState {
+  const line = settings.statusLine;
+  if (line === undefined || line === null) return 'none';
+  const command =
+    typeof line === 'object' && typeof (line as { command?: unknown }).command === 'string'
+      ? (line as { command: string }).command
+      : '';
+  return command === `node "${getStatusLineScriptPath()}"` ? 'ours' : 'other';
+}
+
+/** Whether our status line writer is installed. A file we cannot read counts as 'other'. */
+export function statusLineState(): StatusLineState {
+  try {
+    return statusLineStateOf(readClaudeSettings());
+  } catch {
+    return 'other';
+  }
+}
+
+export async function installStatusLine(): Promise<StatusLineState> {
+  let state: StatusLineState = 'none';
+  await mutateClaudeSettings((settings) => {
+    state = statusLineStateOf(settings);
+    if (state !== 'none') return false;
+    settings.statusLine = {
+      type: 'command',
+      command: `node "${getStatusLineScriptPath()}"`,
+      padding: 0,
+    };
+    state = 'ours';
+    return true;
+  });
+  return state;
+}
+
+export async function uninstallStatusLine(): Promise<StatusLineState> {
+  let state: StatusLineState = 'none';
+  await mutateClaudeSettings((settings) => {
+    state = statusLineStateOf(settings);
+    if (state !== 'ours') return false;
+    delete settings.statusLine;
+    state = 'none';
+    return true;
+  });
+  return state;
+}
+
+/** Copy the shipped status line script to ~/.pixel-agents/hooks/. */
+export function copyStatusLineScript(extensionPath: string): boolean {
+  const src = path.join(extensionPath, 'dist', 'hooks', CLAUDE_STATUSLINE_SCRIPT_NAME);
+  const dst = getStatusLineScriptPath();
+  try {
+    if (!fs.existsSync(src)) return false;
+    fs.mkdirSync(path.dirname(dst), { recursive: true, mode: 0o700 });
+    fs.copyFileSync(src, dst);
+    fs.chmodSync(dst, 0o700);
+    return true;
+  } catch (e) {
+    console.error(`[Pixel Agents] Failed to copy status line script: ${e}`);
+    return false;
   }
 }
 

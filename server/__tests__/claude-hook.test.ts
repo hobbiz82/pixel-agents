@@ -283,3 +283,103 @@ describe('claude-hook.js integration', () => {
     expect(elapsed).toBeLessThan(3500);
   });
 });
+
+/** mptl fork (Đ3): PermissionRequest asks the server for a decision from the page. */
+describe('claude-hook.js permission decision', () => {
+  beforeEach(() => {
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-hook-perm-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+  const itBuilt = it.skipIf(!fs.existsSync(HOOK_SCRIPT));
+
+  /** A server that answers /permission with `answer` and records the paths hit. */
+  function startDecisionServer(
+    answer: string,
+    status = 200,
+  ): Promise<{ port: number; paths: string[]; close: () => void }> {
+    const paths: string[] = [];
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        paths.push(req.url ?? '');
+        if (req.url?.endsWith('/permission')) {
+          res.writeHead(status, { 'Content-Type': 'application/json' });
+          res.end(answer);
+        } else {
+          res.writeHead(200);
+          res.end('ok');
+        }
+      });
+    });
+    return new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const port = (server.address() as { port: number }).port;
+        resolve({ port, paths, close: () => server.close() });
+      });
+    });
+  }
+
+  const perm = JSON.stringify({
+    session_id: 's1',
+    hook_event_name: 'PermissionRequest',
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+  });
+
+  itBuilt('prints an allow decision the server returns', async () => {
+    const srv = await startDecisionServer('{"decision":"allow"}');
+    writeServerJson(srv.port, 't');
+    const { code, stdout } = await runHookScript(perm);
+    srv.close();
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    });
+    expect(srv.paths).toEqual(['/api/hooks/claude', '/api/hooks/claude/permission']);
+  });
+
+  itBuilt('prints a deny decision with a message for Claude', async () => {
+    const srv = await startDecisionServer('{"decision":"deny"}');
+    writeServerJson(srv.port, 't');
+    const { stdout } = await runHookScript(perm);
+    srv.close();
+    expect(JSON.parse(stdout).hookSpecificOutput.decision).toEqual({
+      behavior: 'deny',
+      message: 'Anh đã từ chối từ Pixel Agents.',
+    });
+  });
+
+  itBuilt(
+    'prints nothing when the server has no decision, or an old server lacks the route',
+    async () => {
+      for (const [answer, status] of [
+        ['{"decision":null}', 200],
+        ['not found', 404],
+        ['{"decision":"maybe"}', 200],
+      ] as const) {
+        const srv = await startDecisionServer(answer, status);
+        writeServerJson(srv.port, 't');
+        const { code, stdout } = await runHookScript(perm);
+        srv.close();
+        expect(code).toBe(0);
+        expect(stdout).toBe('');
+      }
+    },
+  );
+
+  itBuilt('never asks for a decision on other events', async () => {
+    const srv = await startDecisionServer('{"decision":"allow"}');
+    writeServerJson(srv.port, 't');
+    const { stdout } = await runHookScript(
+      JSON.stringify({ session_id: 's1', hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
+    );
+    srv.close();
+    expect(stdout).toBe('');
+    expect(srv.paths).toEqual(['/api/hooks/claude']);
+  });
+});

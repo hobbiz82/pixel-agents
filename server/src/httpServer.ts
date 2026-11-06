@@ -6,6 +6,7 @@ import Fastify from 'fastify';
 
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import type { AssistClient, AssistHub } from './assist.js';
 import type {
   AssetCache,
   ReloadAssetsSideEffect,
@@ -60,6 +61,10 @@ export interface HttpServerOptions {
    *  privileged standalone handshake may arrive under -- e.g. a reverse proxy's
    *  public name. See wsAuth.privilegedHostnames. */
   allowedHosts?: readonly string[];
+  /** mptl fork (Đ3): quota, held permission prompts, notifications. */
+  assist?: AssistHub;
+  /** mptl fork (Đ3): install/remove our Claude status line writer. */
+  onSetClaudeQuotaReader?: (enabled: boolean) => Promise<void> | void;
 }
 
 /** Result of createHttpServer(). */
@@ -165,6 +170,23 @@ function registerHookRoute(app: FastifyInstance, options: HttpServerOptions): vo
       reply.send('ok');
     },
   );
+
+  // mptl fork (Đ3): the Claude hook script asks whether the page answered a
+  // permission prompt. The hub answers null at once unless it holds the prompt
+  // (approve-from-page on, a tokened page visible); a held one waits ≤ 50 s.
+  app.post<{ Body: Record<string, unknown> }>(
+    `${HOOK_API_PREFIX}/claude/permission`,
+    { preHandler: bearerAuth(options.token) },
+    async (request, reply) => {
+      const event = request.body ?? {};
+      let agentId: number | undefined;
+      for (const [id, agent] of options.store) {
+        if (agent.sessionId === event.session_id) agentId = id;
+      }
+      const decision = options.assist ? await options.assist.hold(event, agentId) : null;
+      reply.send({ decision });
+    },
+  );
 }
 
 // ── WebSocket ──────────────────────────────────────────────────
@@ -218,6 +240,10 @@ function registerWebSocketRoute(
 
     const { store } = options;
 
+    // mptl fork (Đ3): this socket as an assist client (quota, held prompts).
+    const assistClient: AssistClient = { privileged, send: (m) => safeSend(socket, m) };
+    options.assist?.addClient(assistClient);
+
     // Pipe store events to WebSocket client
     const onAgentAdded = (id: number, agent: AgentState) => {
       safeSend(socket, {
@@ -262,6 +288,9 @@ function registerWebSocketRoute(
           onReloadAssets: options.onReloadAssets,
           privileged,
           ptyManager: options.ptyManager,
+          assist: options.assist,
+          assistClient,
+          onSetClaudeQuotaReader: options.onSetClaudeQuotaReader,
         });
       } catch {
         // Malformed JSON, ignore
@@ -269,6 +298,7 @@ function registerWebSocketRoute(
     });
 
     socket.on('close', () => {
+      options.assist?.removeClient(assistClient);
       store.off('agentAdded', onAgentAdded);
       store.off('agentRemoved', onAgentRemoved);
       store.off('broadcast', onBroadcast);

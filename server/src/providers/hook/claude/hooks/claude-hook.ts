@@ -148,6 +148,79 @@ function postToServer(
   });
 }
 
+/** mptl fork (Đ3): how long to wait for the page. The server holds a prompt at
+ *  most 50 s and answers at once when it does not hold; the installed
+ *  PermissionRequest hook timeout is 60 s. */
+const DECISION_TIMEOUT_MS = 55_000;
+
+type PageDecision = 'allow' | 'deny' | null;
+
+/** Ask one server whether the page answered this permission prompt. Any
+ *  failure (old server without the route, timeout, bad JSON) is "no decision". */
+function askDecision(server: ServerTarget, body: string): Promise<PageDecision> {
+  return new Promise((resolve) => {
+    try {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: server.port,
+          path: `${HOOK_API_PREFIX}/claude/permission`,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            Authorization: `Bearer ${server.token}`,
+          },
+          timeout: DECISION_TIMEOUT_MS,
+        },
+        (res) => {
+          let text = '';
+          res.on('data', (c: Buffer) => (text += c.toString()));
+          res.on('end', () => {
+            if (res.statusCode !== 200) return resolve(null);
+            try {
+              const d = (JSON.parse(text) as { decision?: unknown }).decision;
+              resolve(d === 'allow' || d === 'deny' ? d : null);
+            } catch {
+              resolve(null);
+            }
+          });
+          res.on('error', () => resolve(null));
+        },
+      );
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(null);
+      });
+      req.end(body);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/** stdout to a pipe is asynchronous on macOS: wait for the flush before the
+ *  process.exit in main's finally, or the decision can be cut off. */
+function writeOut(text: string): Promise<void> {
+  return new Promise((resolve) => process.stdout.write(text, () => resolve()));
+}
+
+/** First allow/deny from any server wins; null once every server answered without one. */
+function firstDecision(servers: ServerTarget[], body: string): Promise<PageDecision> {
+  return new Promise((resolve) => {
+    let left = servers.length;
+    if (left === 0) return resolve(null);
+    for (const server of servers) {
+      void askDecision(server, body).then((d) => {
+        left--;
+        if (d) resolve(d);
+        else if (left === 0) resolve(null);
+      });
+    }
+  });
+}
+
 async function main(): Promise<void> {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
@@ -191,6 +264,26 @@ async function main(): Promise<void> {
 
   const body = JSON.stringify(data);
   await Promise.all(servers.map((server) => postToServer(server, body, eventName, sid)));
+
+  // mptl fork (Đ3): a permission prompt may be answered from the page. No
+  // decision = print nothing, and Claude Code shows its own prompt as usual.
+  if (eventName === 'PermissionRequest') {
+    const decision = await firstDecision(servers, body);
+    hookDebug(`decision event=${eventName} sid=${sid} decision=${decision ?? 'none'}`);
+    if (decision) {
+      await writeOut(
+        JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PermissionRequest',
+            decision:
+              decision === 'allow'
+                ? { behavior: 'allow' }
+                : { behavior: 'deny', message: 'Anh đã từ chối từ Pixel Agents.' },
+          },
+        }),
+      );
+    }
+  }
 }
 
 main()
