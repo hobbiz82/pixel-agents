@@ -6,6 +6,7 @@ import { AgentStateStore } from '../src/agentStateStore.js';
 import type { CodexSession } from '../src/codexSessions.js';
 import {
   buildSessionMetas,
+  codexMeta,
   parsePsTree,
   parseSessionRecord,
   sameMeta,
@@ -120,6 +121,30 @@ describe('buildSessionMetas', () => {
     );
     expect(metas.get('s')?.name).toBe('new');
     expect(metas.get('s')?.pid).toBe(20);
+  });
+});
+
+describe('session project', () => {
+  it('a Claude meta names the project from the cwd, folding worktrees', () => {
+    const metas = buildSessionMetas(
+      [{ pid: 10, sessionId: 's', cwd: '/u/lab_manager/.claude/worktrees/w1' }],
+      new Map([[10, KB]]),
+    );
+    expect(metas.get('s')?.project).toBe('lab_manager');
+  });
+
+  it('a Codex meta names the project from the rollout cwd', () => {
+    const c: CodexSession = {
+      sessionId: 'c',
+      file: '/x.jsonl',
+      cwd: '/u/kho',
+    };
+    expect(codexMeta(c).project).toBe('kho');
+  });
+
+  it('a project change is worth a re-send', () => {
+    const m = { provider: 'claude' as const, pid: 1, rssBytes: KB, project: 'a' };
+    expect(sameMeta(m, { ...m, project: 'b' })).toBe(false);
   });
 });
 
@@ -311,6 +336,8 @@ describe('SessionMetaPoller with Codex sessions', () => {
     expect(store.get(2)?.sessionMeta).toEqual({
       provider: 'codex',
       name: 'Hub — quyền',
+      project: 'novaceu-hub',
+      cwd: '/Users/seb/novaceu-hub',
       status: 'idle',
       statusSince: 5,
     });
@@ -320,6 +347,7 @@ describe('SessionMetaPoller with Codex sessions', () => {
       id: 2,
       provider: 'codex',
       name: 'Hub — quyền',
+      project: 'novaceu-hub',
       status: 'idle',
       statusSince: 5,
     });

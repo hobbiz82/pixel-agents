@@ -137,4 +137,8 @@ export interface SessionMeta {
   rssBytes?: number;
   status?: string;
   statusSince?: number;
+  /** mptl fork: repo folder name, worktrees folded into their parent. */
+  project?: string;
+  /** mptl fork, server only (never sent): the folder the session runs in. */
+  cwd?: string;
 }

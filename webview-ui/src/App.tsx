@@ -7,6 +7,7 @@ import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
+import { DeleteArchivedModal } from './components/DeleteArchivedModal.js';
 import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
@@ -40,8 +41,8 @@ import { exportLayoutToFile } from './office/layout/exportLayout.js';
 import { isRotatable } from './office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { overlayProjection } from './office/projection.js';
-import type { ArchivedSession } from './office/sessionArchive.js';
-import type { SessionInput } from './office/sessionRows.js';
+import { type ArchivedSession, type BulkPlan, planBulkArchive } from './office/sessionArchive.js';
+import type { SessionInput, SessionRow } from './office/sessionRows.js';
 import { buildSessionRows } from './office/sessionRows.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout, TILE_SIZE } from './office/types.js';
@@ -126,6 +127,8 @@ function App() {
     officeReadOnly,
     archivedSessions,
     archiveNotice,
+    inspections,
+    startArchiveBatch,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,
@@ -396,21 +399,47 @@ function App() {
     [agents, sessionInput],
   );
   // mptl fork: archive one session (confirm first; the server re-checks all).
-  const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
+  const [archivePlan, setArchivePlanState] = useState<BulkPlan | null>(null);
+  // Opening the confirm asks the server what each session leaves behind.
+  const setArchivePlan = useCallback((plan: BulkPlan | null) => {
+    setArchivePlanState(plan);
+    for (const t of plan?.targets ?? []) transport.send({ type: 'inspectSession', id: t.id });
+  }, []);
   const requestArchive = useCallback(
     (agentId: number) => {
-      const input = sessionInput(agentId);
-      const row = buildSessionRows([input], Date.now())[0];
-      const provider = input.meta?.provider;
-      if (!row || row.archiveBlock || !provider) return;
-      setArchiveTarget({ id: agentId, name: row.name, folder: row.folder, provider });
+      const row = buildSessionRows([sessionInput(agentId)], Date.now())[0];
+      if (!row || row.archiveBlock || !row.providerId) return;
+      setArchivePlan(planBulkArchive([row]));
     },
-    [sessionInput],
+    [sessionInput, setArchivePlan],
   );
-  const confirmArchive = useCallback((target: ArchiveTarget) => {
-    transport.send({ type: 'archiveSession', id: target.id, folder: target.folder });
-    setArchiveTarget(null);
-  }, []);
+  // Bulk: re-read the picked rows now (a session may have started work since).
+  const requestBulkArchive = useCallback(
+    (picked: SessionRow[]) => {
+      const fresh = buildSessionRows(
+        picked.map((r) => sessionInput(r.id)),
+        Date.now(),
+      );
+      setArchivePlan(planBulkArchive(fresh));
+    },
+    [sessionInput, setArchivePlan],
+  );
+  const confirmArchive = useCallback(
+    (targets: ArchiveTarget[]) => {
+      if (targets.length > 1) startArchiveBatch(targets.map((t) => t.id));
+      for (const t of targets) {
+        transport.send({
+          type: 'archiveSession',
+          id: t.id,
+          folder: t.folder,
+          ...(t.stop ? { stop: t.stop } : {}),
+        });
+      }
+      setArchivePlan(null);
+    },
+    [startArchiveBatch, setArchivePlan],
+  );
+  const [deleteTargets, setDeleteTargets] = useState<ArchivedSession[] | null>(null);
   const handleRestore = useCallback((session: ArchivedSession) => {
     transport.send({ type: 'restoreSession', sessionId: session.sessionId });
   }, []);
@@ -850,12 +879,26 @@ function App() {
         rowsAt={sessionRowsAt}
         onPick={handlePickSession}
         onArchive={officeReadOnly ? undefined : (row) => requestArchive(row.id)}
+        onBulkArchive={officeReadOnly ? undefined : requestBulkArchive}
         archived={archivedSessions}
         onRestore={officeReadOnly ? undefined : handleRestore}
+        onDeleteArchived={officeReadOnly ? undefined : setDeleteTargets}
+      />
+      <DeleteArchivedModal
+        sessions={deleteTargets}
+        onCancel={() => setDeleteTargets(null)}
+        onConfirm={(list) => {
+          transport.send({
+            type: 'deleteArchived',
+            sessionIds: list.map((s) => s.sessionId),
+          });
+          setDeleteTargets(null);
+        }}
       />
       <ArchiveConfirmModal
-        target={archiveTarget}
-        onCancel={() => setArchiveTarget(null)}
+        plan={archivePlan}
+        inspections={inspections}
+        onCancel={() => setArchivePlan(null)}
         onConfirm={confirmArchive}
       />
       {archiveNotice && noticeShown === archiveNotice.at && (

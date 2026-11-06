@@ -12,9 +12,16 @@ import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
 import {
   type ArchivedSession,
   archiveResultText,
+  type BulkTally,
+  bulkTallyText,
+  inTally,
+  newTally,
   parseArchivedSessions,
   restoreResultText,
+  tallyAdd,
+  tallyDone,
 } from '../office/sessionArchive.js';
+import { deleteResultText, type Inspection, parseInspection } from '../office/sessionInspection.js';
 import { setCarpetSprites } from '../office/sprites/carpetTiles.js';
 import { setPetTemplates } from '../office/sprites/petSpriteData.js';
 import { setCharacterTemplates } from '../office/sprites/spriteData.js';
@@ -161,6 +168,10 @@ interface ExtensionMessageState {
   archivedSessions: ArchivedSession[];
   /** mptl fork: last archive/restore outcome, shown as a short notice. */
   archiveNotice: { ok: boolean; text: string; at: number } | null;
+  /** mptl fork: latest inspection per agent (for the Lưu trữ confirm). */
+  inspections: Record<number, Inspection>;
+  /** Call before sending a bulk archive: its results then show as one running count. */
+  startArchiveBatch: (ids: number[]) => void;
   // Terminal (standalone only; always false/empty under VS Code, which owns its
   // own terminals and never sends these messages)
   terminalAvailable: boolean;
@@ -236,6 +247,12 @@ export function useExtensionMessages(
     text: string;
     at: number;
   } | null>(null);
+  const [inspections, setInspections] = useState<Record<number, Inspection>>({});
+  // mptl fork: the bulk archive in flight, so its results add up to one notice.
+  const batchRef = useRef<BulkTally | null>(null);
+  const startArchiveBatch = useCallback((ids: number[]) => {
+    batchRef.current = newTally(ids);
+  }, []);
   // Terminal control plane (standalone only; the server never sends these in
   // VS Code mode, so terminalAvailable stays false and no terminal UI renders).
   const [terminalAvailable, setTerminalAvailable] = useState(false);
@@ -316,9 +333,49 @@ export function useExtensionMessages(
 
       if (msg.type === 'sessionArchiveResult') {
         const ok = msg.ok === true;
+        const id = msg.id as number;
+        if (inTally(batchRef.current, id)) {
+          const t = tallyAdd(batchRef.current as BulkTally, {
+            id,
+            ok,
+            reason: msg.reason as string | undefined,
+          });
+          batchRef.current = tallyDone(t) ? null : t;
+          setArchiveNotice({
+            ok: Object.keys(t.refused).length === 0,
+            text: bulkTallyText(t),
+            at: Date.now(),
+          });
+          return;
+        }
         setArchiveNotice({
           ok,
-          text: archiveResultText({ ok, reason: msg.reason as string | undefined }),
+          text: archiveResultText({
+            ok,
+            reason: msg.reason as string | undefined,
+            stopped: msg.stopped as { done: number; skipped: number } | undefined,
+          }),
+          at: Date.now(),
+        });
+        return;
+      }
+
+      if (msg.type === 'sessionInspection') {
+        const insp = parseInspection(msg);
+        if (insp) setInspections((prev) => ({ ...prev, [insp.id]: insp }));
+        return;
+      }
+
+      if (msg.type === 'archivedDeleteResult') {
+        const r = {
+          total: Number(msg.total) || 0,
+          ok: Number(msg.ok) || 0,
+          items: Number(msg.items) || 0,
+          refused: (msg.refused as Record<string, number> | undefined) ?? {},
+        };
+        setArchiveNotice({
+          ok: r.ok === r.total,
+          text: deleteResultText(r),
           at: Date.now(),
         });
         return;
@@ -894,6 +951,7 @@ export function useExtensionMessages(
           rssBytes: msg.rssBytes as number | undefined,
           status: msg.status as string | undefined,
           statusSince: msg.statusSince as number | undefined,
+          project: msg.project as string | undefined,
         });
       }
     };
@@ -971,6 +1029,8 @@ export function useExtensionMessages(
     officeReadOnly,
     archivedSessions,
     archiveNotice,
+    inspections,
+    startArchiveBatch,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,

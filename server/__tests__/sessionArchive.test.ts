@@ -6,6 +6,7 @@ import {
   archiveSession,
   codexBinary,
   foldArchiveLog,
+  MAX_STOP,
   restoreSession,
 } from '../src/sessionArchive.js';
 
@@ -13,7 +14,12 @@ const START = 'Fri Oct 23 11:05:24 2026';
 
 /** In-memory IO: one Claude process (pid 4242) and a codex CLI that records calls. */
 function fakeIO(over: Partial<ArchiveIO> = {}) {
-  const calls = { signals: [] as number[], codex: [] as string[][], log: [] as ArchiveLogEvent[] };
+  const calls = {
+    signals: [] as number[],
+    codex: [] as string[][],
+    log: [] as ArchiveLogEvent[],
+    verified: [] as number[][],
+  };
   const io: ArchiveIO = {
     readClaudeRecord: async (pid) =>
       pid === 4242
@@ -37,6 +43,10 @@ function fakeIO(over: Partial<ArchiveIO> = {}) {
     },
     readLog: async () => calls.log,
     now: () => 1_000,
+    verifyStops: async (_pid, picked) => {
+      calls.verified.push(picked.map((x) => x.pid));
+      return picked.map((x) => x.pid).filter((p) => p !== 666);
+    },
     ...over,
   };
   return { io, calls };
@@ -279,5 +289,57 @@ describe('defaultArchiveIO.processStart', () => {
     const parsed = Date.parse(`${start} UTC`);
     const actual = Date.now() - process.uptime() * 1000;
     expect(Math.abs(parsed - actual)).toBeLessThan(5_000);
+  });
+});
+
+describe('archiveSession — stopping what the session started', () => {
+  const T = 'Fri Oct 23 12:00:00 2026';
+  const stop = [
+    { pid: 500, start: T },
+    { pid: 666, start: T },
+    { pid: 501, start: T },
+  ];
+
+  it('stops the re-checked processes first, then the session, and counts the rest', async () => {
+    const { io, calls } = fakeIO();
+    const out = await archiveSession({ ...claudeTarget, stop }, io);
+    expect(calls.verified).toEqual([[500, 666, 501]]);
+    expect(calls.signals).toEqual([500, 501, 4242]);
+    expect(out.ok && out.stopped).toEqual({ done: 2, skipped: 1 });
+  });
+
+  it('touches nothing when the session itself fails its identity check', async () => {
+    const { io, calls } = fakeIO({ processStart: async () => 'Sat Oct 24 00:00:00 2026' });
+    const out = await archiveSession({ ...claudeTarget, stop }, io);
+    expect(out).toEqual({ ok: false, reason: 'process_changed' });
+    expect(calls.verified).toEqual([]);
+    expect(calls.signals).toEqual([]);
+  });
+
+  it('a process that cannot be signalled is skipped; the session is still archived', async () => {
+    const { io, calls } = fakeIO({
+      signal: (pid) => {
+        if (pid === 500) throw new Error('ESRCH');
+        calls.signals.push(pid);
+      },
+    });
+    const out = await archiveSession({ ...claudeTarget, stop }, io);
+    expect(calls.signals).toEqual([501, 4242]);
+    expect(out.ok && out.stopped).toEqual({ done: 1, skipped: 2 });
+  });
+
+  it('caps the list it is willing to stop', async () => {
+    const { io, calls } = fakeIO();
+    const many = Array.from({ length: 60 }, (_, i) => ({ pid: 1000 + i, start: T }));
+    await archiveSession({ ...claudeTarget, stop: many }, io);
+    expect(calls.verified[0]).toHaveLength(MAX_STOP);
+  });
+
+  it('Codex ignores a stop list (one shared app)', async () => {
+    const { io, calls } = fakeIO();
+    const out = await archiveSession({ ...codexTarget, stop }, io);
+    expect(out.ok).toBe(true);
+    expect(calls.verified).toEqual([]);
+    expect(calls.signals).toEqual([]);
   });
 });
