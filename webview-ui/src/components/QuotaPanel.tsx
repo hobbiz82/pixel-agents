@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   type ProviderQuota,
@@ -59,13 +60,18 @@ export function QuotaPanel({ quota, readOnly, onSetClaudeReader }: QuotaPanelPro
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Fixed position from the button: the toolbar sits under the character
+  // labels (z 41–43), so the panel is portalled above them.
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     const onPress = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !panelRef.current?.contains(t)) setOpen(false);
     };
     document.addEventListener('pointerdown', onPress);
     return () => {
@@ -78,7 +84,11 @@ export function QuotaPanel({ quota, readOnly, onSetClaudeReader }: QuotaPanelPro
   return (
     <div ref={ref} className="relative">
       <Button
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          const r = ref.current?.getBoundingClientRect();
+          if (r) setAnchor({ left: r.left, bottom: window.innerHeight - r.top + 8 });
+          setOpen(!open);
+        }}
         title="Hạn mức Claude + Codex"
         data-testid="quota-button"
         variant={open ? 'active' : 'default'}
@@ -88,51 +98,62 @@ export function QuotaPanel({ quota, readOnly, onSetClaudeReader }: QuotaPanelPro
           <span className={`ml-4 ${TEXT_LEVEL[quotaLevel(worst)]}`}>{Math.round(worst)}%</span>
         )}
       </Button>
-      {open && (
-        <div
-          className="absolute left-0 bottom-full mb-8 w-[300px] max-w-[calc(100vw-32px)] flex flex-col gap-4 p-6 bg-bg border-2 border-border shadow-pixel text-sm"
-          data-testid="quota-panel"
-        >
-          <div className="text-text">Claude</div>
-          {quota.claude ? (
-            <ProviderBlock q={quota.claude} now={now} />
-          ) : (
-            <div className="text-xs text-text-muted leading-snug" data-testid="quota-claude-empty">
-              {quota.claudeReader === 'other' &&
-                'Anh đang có status line riêng nên em không cài bộ đọc hạn mức Claude (không thay của anh).'}
-              {quota.claudeReader === 'ours' &&
-                'Đã bật. Số liệu có khi 1 phiên Claude trả lời câu kế tiếp.'}
-              {quota.claudeReader === 'none' &&
-                'Claude chỉ báo hạn mức cho "status line". Bật để em thêm 1 status line vào ~/.claude/settings.json; nó chỉ ghi % đã dùng + giờ reset vào ~/.pixel-agents. Tắt được ở đây.'}
-            </div>
-          )}
-          {!readOnly && quota.claudeReader === 'none' && (
-            <Button
-              size="sm"
-              onClick={() => onSetClaudeReader(true)}
-              data-testid="quota-claude-enable"
-            >
-              Bật đọc hạn mức Claude
-            </Button>
-          )}
-          {!readOnly && quota.claudeReader === 'ours' && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onSetClaudeReader(false)}
-              data-testid="quota-claude-disable"
-            >
-              Tắt đọc hạn mức Claude
-            </Button>
-          )}
-          <div className="text-text pt-2">Codex</div>
-          {quota.codex ? (
-            <ProviderBlock q={quota.codex} now={now} />
-          ) : (
-            <div className="text-xs text-text-muted">Chưa có số liệu Codex.</div>
-          )}
-        </div>
-      )}
+      {open &&
+        anchor &&
+        createPortal(
+          <div
+            ref={panelRef}
+            className="fixed z-50 w-[300px] max-w-[calc(100vw-32px)] flex flex-col gap-4 p-6 bg-bg border-2 border-border shadow-pixel text-sm break-words"
+            style={{
+              left: Math.max(8, Math.min(anchor.left, window.innerWidth - 308)),
+              bottom: anchor.bottom,
+            }}
+            data-testid="quota-panel"
+          >
+            <div className="text-text">Claude</div>
+            {quota.claude ? (
+              <ProviderBlock q={quota.claude} now={now} />
+            ) : (
+              <div
+                className="text-xs text-text-muted leading-snug"
+                data-testid="quota-claude-empty"
+              >
+                {quota.claudeReader === 'other' &&
+                  'Anh đang có status line riêng nên em không cài bộ đọc hạn mức Claude (không thay của anh).'}
+                {quota.claudeReader === 'ours' &&
+                  'Đã bật. Số liệu có khi 1 phiên Claude trả lời câu kế tiếp.'}
+                {quota.claudeReader === 'none' &&
+                  'Claude chỉ báo hạn mức cho "status line". Bật để em thêm 1 status line vào ~/.claude/settings.json; nó chỉ ghi % đã dùng + giờ reset vào ~/.pixel-agents. Tắt được ở đây.'}
+              </div>
+            )}
+            {!readOnly && quota.claudeReader === 'none' && (
+              <Button
+                size="sm"
+                onClick={() => onSetClaudeReader(true)}
+                data-testid="quota-claude-enable"
+              >
+                Bật đọc hạn mức Claude
+              </Button>
+            )}
+            {!readOnly && quota.claudeReader === 'ours' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onSetClaudeReader(false)}
+                data-testid="quota-claude-disable"
+              >
+                Tắt đọc hạn mức Claude
+              </Button>
+            )}
+            <div className="text-text pt-2">Codex</div>
+            {quota.codex ? (
+              <ProviderBlock q={quota.codex} now={now} />
+            ) : (
+              <div className="text-xs text-text-muted">Chưa có số liệu Codex.</div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
