@@ -62,6 +62,15 @@ describe('archiveConfirmText', () => {
     expect(t).toMatch(/app Claude/);
   });
 
+  it('Claude: does not promise to hide it from the Claude app, which may even restart it (06/11)', () => {
+    const t = archiveConfirmText('claude');
+    expect(t).toMatch(/vẫn còn trong danh sách của app Claude/);
+    expect(t).toMatch(/tự chạy lại/);
+    expect(t).toMatch(/Archive trong app Claude/);
+    expect(archiveResultText({ ok: true, provider: 'claude' })).toMatch(/vẫn còn trong app Claude/);
+    expect(archiveResultText({ ok: true, provider: 'codex' })).toBe('Đã lưu trữ phiên.');
+  });
+
   it('Codex: says it moves to Codex archive and can be restored', () => {
     const t = archiveConfirmText('codex');
     expect(t).toMatch(/lưu trữ của Codex/);

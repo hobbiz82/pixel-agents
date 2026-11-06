@@ -387,6 +387,7 @@ export function useExtensionMessages(
           text: archiveResultText({
             ok,
             reason: msg.reason as string | undefined,
+            provider: msg.provider as string | undefined,
             stopped: msg.stopped as { done: number; skipped: number } | undefined,
           }),
           at: Date.now(),

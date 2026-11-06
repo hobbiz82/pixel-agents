@@ -319,12 +319,15 @@ export interface ProviderQuota {
   fiveHour?: QuotaWindow;
   sevenDay?: QuotaWindow;
   updatedAt: number;
+  source?: QuotaSource;
 }
 
 export interface QuotaWindow {
   usedPercent: number;
   resetsAt: number;
 }
+
+export type QuotaSource = 'live' | 'log';
 
 export type ClaudeReaderState = 'none' | 'ours' | 'other';
 

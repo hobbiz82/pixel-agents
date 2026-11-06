@@ -6,6 +6,8 @@ import {
   quotaLevel,
   type QuotaView,
   type QuotaWindow,
+  readingLabel,
+  remainingPercent,
   resetLabel,
   worstPercent,
 } from '../office/assistView.js';
@@ -32,8 +34,11 @@ function WindowRow({ label, w, now }: { label: string; w: QuotaWindow; now: numb
       <div className="flex justify-between gap-4 text-xs">
         <span className="text-text-muted">{label}</span>
         <span>
-          <span className={TEXT_LEVEL[level]}>{Math.round(w.usedPercent)}%</span>
-          <span className="text-text-muted"> · {resetLabel(w.resetsAt, now)}</span>
+          <span className={TEXT_LEVEL[level]}>dùng {Math.round(w.usedPercent)}%</span>
+          <span className="text-text-muted">
+            {' '}
+            · còn {remainingPercent(w.usedPercent)}% · {resetLabel(w.resetsAt, now)}
+          </span>
         </span>
       </div>
       <div className="h-6 bg-bg-dark border border-border">
@@ -48,6 +53,9 @@ function ProviderBlock({ q, now }: { q: ProviderQuota; now: number }) {
     <>
       {q.fiveHour && <WindowRow label="5 giờ" w={q.fiveHour} now={now} />}
       {q.sevenDay && <WindowRow label="7 ngày" w={q.sevenDay} now={now} />}
+      <div className="text-xs text-text-muted" data-testid="quota-reading">
+        {readingLabel(q, now)}
+      </div>
     </>
   );
 }

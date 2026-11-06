@@ -9,7 +9,7 @@
  * Read-only: nothing here writes or signals a process.
  */
 import { execFile } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -139,9 +139,65 @@ export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
   return Math.abs(b.rssBytes - a.rssBytes) / base < RSS_CHANGE_RATIO;
 }
 
+/**
+ * Time of the last user or assistant line in a transcript (text of its tail).
+ * `statusUpdatedAt` is rewritten when the Claude app restarts its sessions and the
+ * file mtime moves with bookkeeping lines, so only these lines say when the session
+ * last did anything (measured 06/11 on 17 live sessions).
+ */
+export function lastActivityFromText(text: string): number | undefined {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (!l.includes('"timestamp"')) continue;
+    let r: unknown;
+    try {
+      r = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (!r || typeof r !== 'object') continue;
+    const { type, timestamp } = r as { type?: unknown; timestamp?: unknown };
+    if (type !== 'user' && type !== 'assistant') continue;
+    if (typeof timestamp !== 'string') continue;
+    const t = Date.parse(timestamp);
+    if (Number.isFinite(t)) return t;
+  }
+  return undefined;
+}
+
+/** Tail sizes tried in turn; a long run of bookkeeping lines needs the larger one. */
+const ACTIVITY_TAIL_BYTES = [256 * 1024, 4 * 1024 * 1024];
+
+export async function readLastActivity(file: string): Promise<number | undefined> {
+  const fh = await open(file, 'r');
+  try {
+    const { size } = await fh.stat();
+    for (const want of ACTIVITY_TAIL_BYTES) {
+      const len = Math.min(size, want);
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, size - len);
+      const t = lastActivityFromText(buf.toString('utf8'));
+      if (t !== undefined || len === size) return t;
+    }
+    return undefined;
+  } finally {
+    await fh.close();
+  }
+}
+
+/** A Claude character is judged dead only after this many checks in a row. */
+const DEAD_AFTER_TICKS = 2;
+/** ...and only when its transcript has not been written for this long. */
+const DEAD_QUIET_MS = 120_000;
+
 export interface SessionMetaIO {
   readRecords: () => Promise<SessionRecord[]>;
   readPs: () => Promise<string>;
+  /** Last user/assistant time of a transcript; absent = use the status time. */
+  readLastActivity?: (file: string) => Promise<number | undefined>;
+  /** Transcript mtime (ms); absent = never judge a character dead. */
+  transcriptMtime?: (file: string) => Promise<number | undefined>;
   /** Codex sessions open recently; absent = Codex not watched. */
   readCodex?: () => Promise<CodexSession[]>;
 }
@@ -156,12 +212,72 @@ export class SessionMetaPoller {
   private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
   private live: LiveSession[] = [];
+  private readonly activityCache = new Map<string, { key: string; at: number | undefined }>();
+  private readonly misses = new Map<number, number>();
+  private gone: ((id: number) => void) | undefined;
 
   constructor(
     private readonly store: AgentStateStore,
     private readonly io: SessionMetaIO = defaultIO(),
     private readonly projectsRoot = path.join(os.homedir(), '.claude', 'projects'),
   ) {}
+
+  /** Called with a Claude character whose process is gone (SessionEnd can be missed). */
+  onSessionGone(cb: (id: number) => void): void {
+    this.gone = cb;
+  }
+
+  private async lastActivity(file: string): Promise<number | undefined> {
+    const read = this.io.readLastActivity;
+    if (!read) return undefined;
+    try {
+      const st = this.io.transcriptMtime ? await this.io.transcriptMtime(file) : undefined;
+      const key = String(st ?? '');
+      const hit = this.activityCache.get(file);
+      if (hit && st !== undefined && hit.key === key) return hit.at;
+      const at = await read(file);
+      this.activityCache.set(file, { key, at });
+      return at;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Remove Claude characters with no live process: missed SessionEnd, killed app, old transcript. */
+  private async pruneDead(aliveIds: Set<string>): Promise<void> {
+    const mtimeOf = this.io.transcriptMtime;
+    if (!mtimeOf || !this.gone) return;
+    const now = Date.now();
+    for (const [id, agent] of this.store) {
+      const isClaude = (agent.providerId ?? 'claude') === 'claude';
+      if (
+        !agent.isExternal ||
+        !isClaude ||
+        agent.leadAgentId !== undefined ||
+        aliveIds.has(agent.sessionId)
+      ) {
+        this.misses.delete(id);
+        continue;
+      }
+      let mtime: number | undefined;
+      try {
+        mtime = await mtimeOf(agent.jsonlFile);
+      } catch {
+        mtime = undefined;
+      }
+      if (mtime !== undefined && now - mtime < DEAD_QUIET_MS) {
+        this.misses.delete(id);
+        continue;
+      }
+      const n = (this.misses.get(id) ?? 0) + 1;
+      this.misses.set(id, n);
+      if (n >= DEAD_AFTER_TICKS) {
+        this.misses.delete(id);
+        this.gone(id);
+      }
+    }
+    for (const id of this.misses.keys()) if (!this.store.get(id)) this.misses.delete(id);
+  }
 
   /** Every session alive at the last tick: Claude by pid, Codex by recent rollout. */
   liveSessions(): LiveSession[] {
@@ -186,6 +302,17 @@ export class SessionMetaPoller {
           ? [{ file, cwd: rec.cwd, sessionId: rec.sessionId, provider: 'claude' as const }]
           : [];
       });
+      for (const rec of records) {
+        const meta = metas.get(rec.sessionId);
+        if (!meta || meta.pid !== rec.pid) continue;
+        if (meta.status !== 'idle' && meta.status !== 'waiting') continue;
+        const file = transcriptPathFor(this.projectsRoot, rec);
+        const at = file ? await this.lastActivity(file) : undefined;
+        if (at !== undefined && (meta.statusSince === undefined || at < meta.statusSince)) {
+          meta.statusSince = at;
+        }
+      }
+      const aliveIds = new Set(metas.keys());
       for (const c of codex) {
         metas.set(c.sessionId, codexMeta(c));
         live.push({ file: c.file, cwd: c.cwd, sessionId: c.sessionId, provider: 'codex' });
@@ -197,6 +324,7 @@ export class SessionMetaPoller {
         agent.sessionMeta = meta;
         this.store.broadcast(sessionMetaMessage(id, meta));
       }
+      await this.pruneDead(aliveIds);
     } catch {
       // Unreadable folder or failed `ps`: keep the last known meta.
     } finally {
@@ -246,5 +374,7 @@ export function defaultIO(
         );
       }),
     readCodex: () => readCodexSessions(),
+    readLastActivity,
+    transcriptMtime: async (file) => (await stat(file)).mtimeMs,
   };
 }

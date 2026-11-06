@@ -34,7 +34,7 @@ export function archiveBlock({ meta, attention }: ArchiveInput): string | null {
 
 export function archiveConfirmText(provider: ArchiveProvider): string {
   return provider === 'claude'
-    ? 'Phiên Claude này sẽ bị dừng (như bấm thoát) và nhân vật biến mất khỏi văn phòng. Cuộc trò chuyện không xóa: anh mở lại được trong app Claude, hoặc bằng lệnh ở tab "Đã lưu trữ".'
+    ? 'Em chỉ dừng tiến trình của phiên (như bấm thoát) để giải phóng RAM; nhân vật biến mất khỏi văn phòng. Cuộc trò chuyện không xóa và vẫn còn trong danh sách của app Claude. Nếu phiên đang mở trong app, app có thể tự chạy lại ngay. Muốn ẩn khỏi app: bấm Archive trong app Claude.'
     : 'Luồng Codex này chuyển vào mục lưu trữ của Codex và nhân vật biến mất khỏi văn phòng. Không xóa gì: bấm Khôi phục ở tab "Đã lưu trữ" để đưa về.';
 }
 
@@ -52,10 +52,15 @@ export function archiveResultText(r: {
   stopped?: { done: number; skipped: number };
 }): string {
   if (r.ok) {
-    if (!r.stopped) return 'Đã lưu trữ phiên.';
+    const claude = r.provider === 'claude';
+    const head = claude ? 'Đã dừng tiến trình phiên' : 'Đã lưu trữ phiên';
     const skipped =
-      r.stopped.skipped > 0 ? ` (${r.stopped.skipped} tiến trình đã đổi nên không tắt)` : '';
-    return `Đã lưu trữ phiên, tắt ${r.stopped.done} tiến trình${skipped}.`;
+      r.stopped && r.stopped.skipped > 0
+        ? ` (${r.stopped.skipped} tiến trình đã đổi nên không tắt)`
+        : '';
+    const extra = r.stopped ? `, tắt ${r.stopped.done} tiến trình${skipped}` : '';
+    const note = claude ? ' Phiên vẫn còn trong app Claude (Archive trong app để ẩn).' : '';
+    return `${head}${extra}.${note}`;
   }
   return ARCHIVE_REFUSAL[r.reason ?? ''] ?? 'Không lưu trữ được, anh thử lại sau.';
 }

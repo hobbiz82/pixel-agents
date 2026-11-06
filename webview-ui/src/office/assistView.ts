@@ -12,6 +12,8 @@ export interface ProviderQuota {
   fiveHour?: QuotaWindow;
   sevenDay?: QuotaWindow;
   updatedAt: number;
+  /** Codex: live = asked from the server; log = this Mac's rollouts (may lag). */
+  source?: 'live' | 'log';
 }
 
 export type ClaudeReader = 'none' | 'ours' | 'other';
@@ -63,6 +65,7 @@ function parseProvider(raw: unknown): ProviderQuota | undefined {
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
     updatedAt: r.updatedAt,
+    ...(r.source === 'live' || r.source === 'log' ? { source: r.source } : {}),
   };
 }
 
@@ -112,6 +115,22 @@ export function resetLabel(resetsAt: number, now: number): string {
   const p = parts(resetsAt);
   const time = `${p.hour}:${p.minute}`;
   return resetsAt - now < DAY_MS ? `reset ${time}` : `reset ${time} ${p.day}/${p.month}`;
+}
+
+/** When (and for Codex, from where) a quota figure was read. */
+export function readingLabel(q: Pick<ProviderQuota, 'updatedAt' | 'source'>, now: number): string {
+  const p = parts(q.updatedAt);
+  const time = `${p.hour}:${p.minute}`;
+  const when =
+    now - q.updatedAt < DAY_MS ? `đọc lúc ${time}` : `đọc lúc ${time} ${p.day}/${p.month}`;
+  if (q.source === 'live') return `${when} · máy chủ Codex`;
+  if (q.source === 'log') return `${when} · nhật ký trên máy, có thể cũ`;
+  return when;
+}
+
+/** What is left of a window, as the Codex and Claude apps show it. */
+export function remainingPercent(usedPercent: number): number {
+  return Math.max(0, Math.round(100 - usedPercent));
 }
 
 export function parsePermissionRequests(raw: unknown): HeldPrompt[] {

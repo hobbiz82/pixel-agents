@@ -5,6 +5,8 @@ import {
   parsePermissionRequests,
   parseQuotaStatus,
   quotaLevel,
+  readingLabel,
+  remainingPercent,
   resetLabel,
   secondsLeft,
   worstPercent,
@@ -99,5 +101,35 @@ describe('parseAssistSettings', () => {
       notifyMac: true,
       holdSeconds: 30,
     });
+  });
+});
+
+describe('quota source and reading time (06/11 fix)', () => {
+  it('keeps a known source and drops an unknown one', () => {
+    const v = parseQuotaStatus({
+      type: 'quotaStatus',
+      codex: { fiveHour: { usedPercent: 19, resetsAt: 10 }, updatedAt: 1, source: 'live' },
+      claude: { fiveHour: { usedPercent: 5, resetsAt: 10 }, updatedAt: 1, source: 'x' },
+    });
+    expect(v.codex?.source).toBe('live');
+    expect(v.claude && 'source' in v.claude).toBe(false);
+  });
+
+  it('says when and where the figure was read, in Hồ Chí Minh time', () => {
+    const now = Date.parse('2026-11-06T09:45:00Z');
+    expect(
+      readingLabel({ updatedAt: Date.parse('2026-11-06T09:42:00Z'), source: 'live' }, now),
+    ).toBe('đọc lúc 16:42 · máy chủ Codex');
+    expect(
+      readingLabel({ updatedAt: Date.parse('2026-11-06T07:43:00Z'), source: 'log' }, now),
+    ).toBe('đọc lúc 14:43 · nhật ký trên máy, có thể cũ');
+    expect(readingLabel({ updatedAt: Date.parse('2026-11-04T01:00:00Z') }, now)).toBe(
+      'đọc lúc 08:00 04/11',
+    );
+  });
+
+  it('remaining is 100 minus used, never below 0', () => {
+    expect(remainingPercent(19)).toBe(81);
+    expect(remainingPercent(104)).toBe(0);
   });
 });

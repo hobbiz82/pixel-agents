@@ -1,15 +1,18 @@
 /**
  * mptl fork (Đ3): usage limits of Claude and Codex, for the quota panel.
  *
- * Codex writes its limits into every rollout as `token_count` events
- * (`rate_limits.primary` = 5-hour window, `secondary` = weekly), so the newest
- * rollout that carries one is the current figure. Claude Code exposes its
+ * Codex: asked live from a throwaway `codex app-server` (`account/rateLimits/read`)
+ * at most every 5 minutes. Rollouts also carry the limits (`token_count` events) but
+ * only from turns run on this Mac: on 06/11 the newest one said 7 % while the server
+ * said 19 %. A rollout reading is used only when it is newer than the live one, or
+ * when the server cannot be asked. Claude Code exposes its
  * limits only to a status line command (`rate_limits.five_hour` /
  * `seven_day`, claude.ai subscribers only, after the session's first API
  * response); our status line writer stores them in
  * ~/.pixel-agents/claude-quota.json and this module reads that file.
  * Read-only: nothing here writes to ~/.codex or ~/.claude.
  */
+import { spawn as nodeSpawn } from 'node:child_process';
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import * as os from 'node:os';
@@ -30,6 +33,8 @@ export interface ProviderQuota {
   sevenDay?: QuotaWindow;
   /** Epoch ms of the reading. */
   updatedAt: number;
+  /** Codex only: asked from the server, or taken from this Mac's rollouts. */
+  source?: 'live' | 'log';
 }
 
 export const CLAUDE_QUOTA_FILE_NAME = 'claude-quota.json';
@@ -123,7 +128,8 @@ export function claudeQuotaFromStatusInput(input: unknown, now: number): Provide
 export function dropExpired(q: ProviderQuota | null, now: number): ProviderQuota | null {
   if (!q) return null;
   const live = (w?: QuotaWindow) => (w && w.resetsAt > now ? w : undefined);
-  return withWindows(live(q.fiveHour), live(q.sevenDay), q.updatedAt);
+  const kept = withWindows(live(q.fiveHour), live(q.sevenDay), q.updatedAt);
+  return kept && q.source ? { ...kept, source: q.source } : kept;
 }
 
 function parseWindow(v: unknown): QuotaWindow | undefined | false {
@@ -219,6 +225,148 @@ export async function readCodexQuota(root = codexDefaultRoot()): Promise<Provide
   return null;
 }
 
+function liveWindow(v: unknown): { w: QuotaWindow; mins?: number } | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const { usedPercent, resetsAt, windowDurationMins } = v as Record<string, unknown>;
+  const w = windowOf(usedPercent, resetsAt);
+  return w ? { w, mins: finite(windowDurationMins) ? windowDurationMins : undefined } : undefined;
+}
+
+/** `account/rateLimits/read` result → quota (the `codex` bucket when there are several). */
+export function codexQuotaFromRateLimits(result: unknown, now: number): ProviderQuota | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as {
+    rateLimits?: unknown;
+    rateLimitsByLimitId?: Record<string, unknown> | null;
+  };
+  const snap = (r.rateLimitsByLimitId?.codex ?? r.rateLimits) as
+    { primary?: unknown; secondary?: unknown } | undefined;
+  if (!snap || typeof snap !== 'object') return null;
+  let fiveHour: QuotaWindow | undefined;
+  let sevenDay: QuotaWindow | undefined;
+  for (const [slot, raw] of [
+    ['primary', snap.primary],
+    ['secondary', snap.secondary],
+  ] as const) {
+    const lw = liveWindow(raw);
+    if (!lw) continue;
+    if (lw.mins === FIVE_HOUR_MINUTES || (lw.mins === undefined && slot === 'primary'))
+      fiveHour = lw.w;
+    else if (lw.mins === SEVEN_DAY_MINUTES || (lw.mins === undefined && slot === 'secondary'))
+      sevenDay = lw.w;
+  }
+  const q = withWindows(fiveHour, sevenDay, now);
+  return q ? { ...q, source: 'live' } : null;
+}
+
+export interface AppServerChild {
+  stdin: NodeJS.WritableStream;
+  stdout: NodeJS.ReadableStream;
+  kill: () => unknown;
+}
+
+const spawnAppServer = (): AppServerChild =>
+  nodeSpawn('codex', ['app-server'], {
+    stdio: ['pipe', 'pipe', 'ignore'],
+  }) as unknown as AppServerChild;
+
+/**
+ * One read-only JSON-RPC exchange with a fresh `codex app-server`: initialize,
+ * initialized, account/rateLimits/read. Nothing else is ever sent.
+ */
+export function fetchCodexRateLimits(
+  spawn: () => AppServerChild = spawnAppServer,
+  timeoutMs = 20_000,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let child: AppServerChild;
+    try {
+      child = spawn();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    let buf = '';
+    let done = false;
+    const finish = (err: unknown, value?: unknown) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        child.kill();
+      } catch {
+        // already gone
+      }
+      if (err) reject(err);
+      else resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error('codex app-server timeout')), timeoutMs);
+    const send = (m: Record<string, unknown>) => child.stdin.write(JSON.stringify(m) + '\n');
+    child.stdout.on('error', (err) => finish(err));
+    (child as unknown as { on?: (e: string, f: (x: unknown) => void) => void }).on?.(
+      'error',
+      (err) => finish(err),
+    );
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      buf += chunk.toString();
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        let m: { id?: unknown; result?: unknown; error?: unknown };
+        try {
+          m = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (m.id === 1) {
+          if (m.error) return finish(new Error('codex app-server initialize failed'));
+          send({ method: 'initialized' });
+          send({ id: 2, method: 'account/rateLimits/read', params: null });
+        } else if (m.id === 2) {
+          if (m.error) return finish(new Error('codex rate limits unavailable'));
+          return finish(null, m.result);
+        }
+      }
+    });
+    send({
+      id: 1,
+      method: 'initialize',
+      params: { clientInfo: { name: 'pixel-agents-quota', version: '1' } },
+    });
+  });
+}
+
+/** How often the Codex server is asked (each ask starts `codex app-server` for ~1 s). */
+export const CODEX_LIVE_EVERY_MS = 5 * 60_000;
+
+/** Live reading at most every 5 minutes; the newer of live and rollout wins. */
+export function makeCodexQuotaReader(deps: {
+  fetchLive: () => Promise<unknown>;
+  readLog: () => Promise<ProviderQuota | null>;
+  now: () => number;
+  liveEveryMs?: number;
+}): () => Promise<ProviderQuota | null> {
+  let lastLive: ProviderQuota | null = null;
+  let lastAsk = -Infinity;
+  const every = deps.liveEveryMs ?? CODEX_LIVE_EVERY_MS;
+  return async () => {
+    const now = deps.now();
+    if (now - lastAsk >= every) {
+      lastAsk = now;
+      try {
+        lastLive = codexQuotaFromRateLimits(await deps.fetchLive(), now) ?? lastLive;
+      } catch {
+        // keep the last live reading; the rollouts may still have a newer one
+      }
+    }
+    const fromLog = await deps.readLog().catch(() => null);
+    const logQ = fromLog ? { ...fromLog, source: 'log' as const } : null;
+    if (lastLive && (!logQ || lastLive.updatedAt >= logQ.updatedAt)) return lastLive;
+    return logQ;
+  };
+}
+
 export function quotaMessage(
   claude: ProviderQuota | null,
   codex: ProviderQuota | null,
@@ -238,7 +386,11 @@ export interface QuotaIO {
 
 const defaultQuotaIO: QuotaIO = {
   readClaude: () => readClaudeQuota(),
-  readCodex: () => readCodexQuota(),
+  readCodex: makeCodexQuotaReader({
+    fetchLive: () => fetchCodexRateLimits(),
+    readLog: () => readCodexQuota(),
+    now: () => Date.now(),
+  }),
   now: () => Date.now(),
 };
 

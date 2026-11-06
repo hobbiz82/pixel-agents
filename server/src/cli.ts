@@ -552,6 +552,8 @@ async function main(): Promise<void> {
       `\n  Pixel Agents server running at http://${displayHost}:${config.port}/?token=${config.token}\n`,
     );
 
+    // mptl fork: a session that died without a SessionEnd we could match leaves the office.
+    sessionMeta.onSessionGone((id) => runtime.removeDeadSession(id));
     sessionMeta.start();
     quota.start();
 

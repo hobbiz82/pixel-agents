@@ -207,6 +207,13 @@ components:
           $ref: '#/components/schemas/QuotaWindow'
         updatedAt:
           type: integer
+        source:
+          $ref: '#/components/schemas/QuotaSource'
+
+    QuotaSource:
+      description: mptl fork. Codex only - live = asked from the Codex server, log = this Mac's rollouts (may lag).
+      type: string
+      enum: [live, log]
 
     ClaudeReaderState:
       description: mptl fork. Our Claude status line writer is absent, installed, or blocked by the user's own.
