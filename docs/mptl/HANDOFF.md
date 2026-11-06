@@ -35,7 +35,9 @@ npm run test:package-contract
 ## 3. Safety rules (do not relax)
 
 - Archive is the only feature that acts on the machine. Claude: `SIGTERM` to the session's own pid only after re-reading its session record (same `sessionId`, idle, start time equal to `ps -o lstart` **in UTC**, binary is `claude`). Never `SIGKILL`, never a process group. Codex: `codex archive|unarchive <id>` via `execFile` (no shell).
-- Refuse while a session is `busy` or `waiting` (the owner confirmed: keep this lock). One session per action, always after a confirm dialog. No hard delete.
+- Refuse while a session is `busy` or `waiting` (the owner confirmed: keep this lock). Every action goes through a confirm dialog; bulk archive takes at most 20 sessions (`BULK_MAX`) and skips busy/waiting ones with a reason.
+- Child processes (`server/src/sessionInspect.ts`): the confirm lists processes the session started; ticked = stop with the session. The server re-checks each `{pid, start}` with `verifyStopTargets` (same start time, in the session tree or orphaned with ppid 1, not run by launchd, not `claude`, not the session itself), `SIGTERM`s them before `claude`, max 40. MCP servers are only counted; they exit with the session. Never send process args to the page.
+- Delete (`server/src/sessionTrash.ts`): only archived sessions, only after typing the session count. Moves files with `/usr/bin/trash` (Finder "Put Back" works): Claude transcript + its side folder + `~/.claude/file-history/<id>`; Codex rollouts in `~/.codex/archived_sessions`. UUID ids only, exact paths, no symlinks, refused if the session is live again. Max 50 per request. No permanent delete anywhere.
 - A client without the server token is read-only: every message except `webviewReady` is refused in `handleClientMessage`. New message types are privileged by default; keep it that way.
 - Never print or commit the page token, `~/.config/local-ai/*.env`, or process command lines.
 
