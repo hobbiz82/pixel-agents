@@ -85,4 +85,40 @@ describe('buildSessionRows', () => {
     expect(row.longIdle).toBe(false);
     expect(row.idleMs).toBeNull();
   });
+
+  it('carries the raw facts the table filters and sorts on', () => {
+    const rows = buildSessionRows(
+      [
+        {
+          id: 1,
+          folder: 'w1',
+          meta: {
+            provider: 'codex',
+            project: 'lab_manager',
+            status: 'idle',
+            statusSince: NOW - H,
+            rssBytes: 10,
+          },
+        },
+        { id: 2, attention: true, meta: { status: 'busy', statusSince: NOW } },
+        { id: 3 },
+      ],
+      NOW,
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(1)).toMatchObject({
+      providerId: 'codex',
+      project: 'lab_manager',
+      status: 'idle',
+      rssBytes: 10,
+    });
+    expect(byId.get(2)).toMatchObject({ status: 'waiting', project: '', rssBytes: null });
+    expect(byId.get(2)?.providerId).toBeUndefined();
+    expect(byId.get(3)?.status).toBe('unknown');
+  });
+
+  it('falls back to the folder as project when the server sent none', () => {
+    const [row] = buildSessionRows([{ id: 1, folder: 'skills', meta: {} }], NOW);
+    expect(row.project).toBe('skills');
+  });
 });

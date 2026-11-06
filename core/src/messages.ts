@@ -216,6 +216,7 @@ export interface AgentSessionMeta {
   rssBytes?: number;
   status?: string;
   statusSince?: number;
+  project?: string;
 }
 
 export type SessionProvider = 'claude' | 'codex';

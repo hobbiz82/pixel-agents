@@ -264,6 +264,8 @@ export interface Character {
     rssBytes?: number;
     status?: string;
     statusSince?: number;
+    /** Repo folder name (worktrees folded into their parent). */
+    project?: string;
   };
 }
 

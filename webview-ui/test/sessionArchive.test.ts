@@ -9,9 +9,16 @@ import {
   archiveBlock,
   archiveConfirmText,
   archiveResultText,
+  BULK_MAX,
+  bulkTallyText,
+  inTally,
+  newTally,
   parseArchivedSessions,
+  planBulkArchive,
   restoreHint,
   restoreResultText,
+  tallyAdd,
+  tallyDone,
 } from '../src/office/sessionArchive.js';
 import { buildSessionRows } from '../src/office/sessionRows.js';
 
@@ -103,5 +110,80 @@ describe('parseArchivedSessions', () => {
       ]),
     ).toEqual([{ sessionId: 'a', provider: 'claude', archivedAt: 2, name: 'N', folder: 'f' }]);
     expect(parseArchivedSessions(undefined)).toEqual([]);
+  });
+});
+
+describe('bulk archive', () => {
+  const base = {
+    folder: 'f',
+    project: 'p',
+    provider: null,
+    status: 'idle' as const,
+    statusText: '',
+    idleMs: null,
+    rssBytes: null,
+    ramText: '',
+    longIdle: false,
+  };
+  const ok = (id: number, providerId: 'claude' | 'codex' = 'claude') => ({
+    ...base,
+    id,
+    name: `S${id}`,
+    providerId,
+    archiveBlock: null,
+  });
+
+  it('splits picked rows into targets and skipped-with-reason', () => {
+    const plan = planBulkArchive([
+      ok(1),
+      { ...ok(2), archiveBlock: 'Đang chạy — chờ phiên rảnh rồi mới lưu trữ được' },
+      { ...ok(3), providerId: undefined },
+      ok(4, 'codex'),
+    ]);
+    expect(plan.targets.map((t) => [t.id, t.provider])).toEqual([
+      [1, 'claude'],
+      [4, 'codex'],
+    ]);
+    expect(plan.skipped.map((s) => s.id)).toEqual([2, 3]);
+    expect(plan.skipped[0].reason).toMatch(/Đang chạy/);
+    expect(plan.over).toBe(0);
+  });
+
+  it(`takes at most ${BULK_MAX} sessions per action and counts the rest`, () => {
+    const plan = planBulkArchive(Array.from({ length: BULK_MAX + 3 }, (_, i) => ok(i + 1)));
+    expect(plan.targets).toHaveLength(BULK_MAX);
+    expect(plan.over).toBe(3);
+  });
+
+  it('tells progress, then the final count with refusal reasons', () => {
+    expect(bulkTallyText({ total: 5, ok: 2, refused: {} })).toBe('Đang lưu trữ… 2/5');
+    expect(bulkTallyText({ total: 3, ok: 2, refused: { busy: 1 } })).toBe(
+      'Đã lưu trữ 2/3 phiên. 1 phiên không lưu trữ: phiên đang chạy.',
+    );
+    expect(bulkTallyText({ total: 2, ok: 2, refused: {} })).toBe('Đã lưu trữ 2/2 phiên.');
+    expect(bulkTallyText({ total: 4, ok: 1, refused: { busy: 1, unknown: 2 } })).toBe(
+      'Đã lưu trữ 1/4 phiên. 3 phiên không lưu trữ: 1 phiên đang chạy, 2 không tìm thấy phiên.',
+    );
+  });
+});
+
+describe('bulk tally', () => {
+  it('counts results of the batch only, once per session', () => {
+    let t = newTally([1, 2, 3]);
+    t = tallyAdd(t, { id: 1, ok: true });
+    t = tallyAdd(t, { id: 1, ok: true });
+    t = tallyAdd(t, { id: 9, ok: true });
+    t = tallyAdd(t, { id: 2, ok: false, reason: 'busy' });
+    expect(t).toMatchObject({ total: 3, ok: 1, refused: { busy: 1 } });
+    expect(tallyDone(t)).toBe(false);
+    t = tallyAdd(t, { id: 3, ok: false });
+    expect(t.refused).toEqual({ busy: 1, failed: 1 });
+    expect(tallyDone(t)).toBe(true);
+  });
+
+  it('tells whether a result belongs to the batch', () => {
+    expect(inTally(newTally([4]), 4)).toBe(true);
+    expect(inTally(newTally([4]), 5)).toBe(false);
+    expect(inTally(null, 4)).toBe(false);
   });
 });

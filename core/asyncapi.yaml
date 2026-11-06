@@ -499,6 +499,8 @@ components:
           type: string
         statusSince:
           type: integer
+        project:
+          type: string
 
     ArchivedSessions:
       description: |

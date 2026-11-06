@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import type { AgentStateStore } from './agentStateStore.js';
 import { type CodexSession, readCodexSessions } from './codexSessions.js';
 import type { LiveSession } from './fileWatcher.js';
+import { projectOfCwd } from './sessionProject.js';
 import type { SessionMeta } from './types.js';
 
 export interface SessionRecord {
@@ -91,14 +92,17 @@ export function buildSessionMetas(
   }
   const metas = new Map<string, SessionMeta>();
   for (const [sessionId, rec] of best) {
-    metas.set(sessionId, {
+    const meta: SessionMeta = {
       provider: 'claude',
       pid: rec.pid,
       name: rec.name,
       rssBytes: rss.get(rec.pid) as number,
       status: rec.status,
       statusSince: rec.statusUpdatedAt,
-    });
+    };
+    const project = projectOfCwd(rec.cwd);
+    if (project) meta.project = project;
+    metas.set(sessionId, meta);
   }
   return metas;
 }
@@ -118,12 +122,15 @@ export function codexMeta(s: CodexSession): SessionMeta {
   if (s.name !== undefined) meta.name = s.name;
   if (s.status !== undefined) meta.status = s.status;
   if (s.statusSince !== undefined) meta.statusSince = s.statusSince;
+  const project = projectOfCwd(s.cwd);
+  if (project) meta.project = project;
   return meta;
 }
 
 export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
   if (!a) return false;
   if (a.provider !== b.provider || a.pid !== b.pid || a.name !== b.name) return false;
+  if (a.project !== b.project) return false;
   if (a.status !== b.status || a.statusSince !== b.statusSince) return false;
   if (a.rssBytes === undefined || b.rssBytes === undefined) return a.rssBytes === b.rssBytes;
   const base = Math.max(a.rssBytes, 1);

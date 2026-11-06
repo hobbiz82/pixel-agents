@@ -4,6 +4,7 @@
  * only decides what the buttons say and when they are offered.
  */
 import type { SessionFacts } from './sessionMetaLabels.js';
+import type { SessionRow } from './sessionRows.js';
 
 export type ArchiveProvider = 'claude' | 'codex';
 
@@ -82,4 +83,94 @@ export function parseArchivedSessions(raw: unknown): ArchivedSession[] {
     out.push(s);
   }
   return out;
+}
+
+/** Most sessions one bulk Lưu trữ sends; the server still checks each one. */
+export const BULK_MAX = 20;
+
+export interface BulkTarget {
+  id: number;
+  name: string;
+  folder: string;
+  provider: ArchiveProvider;
+}
+
+export interface BulkPlan {
+  targets: BulkTarget[];
+  skipped: { id: number; name: string; reason: string }[];
+  /** Picked rows left out because of BULK_MAX. */
+  over: number;
+}
+
+export function planBulkArchive(rows: SessionRow[]): BulkPlan {
+  const plan: BulkPlan = { targets: [], skipped: [], over: 0 };
+  for (const r of rows) {
+    if (r.archiveBlock || !r.providerId) {
+      plan.skipped.push({
+        id: r.id,
+        name: r.name,
+        reason: r.archiveBlock ?? 'Chưa rõ phiên này chạy bằng gì',
+      });
+    } else if (plan.targets.length >= BULK_MAX) {
+      plan.over++;
+    } else {
+      plan.targets.push({ id: r.id, name: r.name, folder: r.folder, provider: r.providerId });
+    }
+  }
+  return plan;
+}
+
+const REFUSAL_SHORT: Record<string, string> = {
+  busy: 'phiên đang chạy',
+  waiting: 'phiên đang chờ anh trả lời',
+  process_changed: 'phiên đã đổi hoặc đã tắt',
+  unknown: 'không tìm thấy phiên',
+  failed: 'lỗi khi lưu trữ',
+};
+
+export function bulkTallyText(t: {
+  total: number;
+  ok: number;
+  refused: Record<string, number>;
+}): string {
+  const refusedCount = Object.values(t.refused).reduce((a, b) => a + b, 0);
+  if (t.ok + refusedCount < t.total) return `Đang lưu trữ… ${t.ok + refusedCount}/${t.total}`;
+  const head = `Đã lưu trữ ${t.ok}/${t.total} phiên.`;
+  if (refusedCount === 0) return head;
+  const entries = Object.entries(t.refused).filter(([, n]) => n > 0);
+  const short = (reason: string) => REFUSAL_SHORT[reason] ?? 'lỗi khác';
+  const why =
+    entries.length === 1
+      ? short(entries[0][0])
+      : entries.map(([reason, n]) => `${n} ${short(reason)}`).join(', ');
+  return `${head} ${refusedCount} phiên không lưu trữ: ${why}.`;
+}
+
+export interface BulkTally {
+  total: number;
+  ok: number;
+  refused: Record<string, number>;
+  /** Sessions of the batch with no result yet. */
+  pending: number[];
+}
+
+export function newTally(ids: number[]): BulkTally {
+  return { total: ids.length, ok: 0, refused: {}, pending: [...ids] };
+}
+
+export function inTally(t: BulkTally | null, id: number): boolean {
+  return t !== null && t.pending.includes(id);
+}
+
+/** Count one archive result; results outside the batch or repeated are ignored. */
+export function tallyAdd(t: BulkTally, r: { id: number; ok: boolean; reason?: string }): BulkTally {
+  if (!t.pending.includes(r.id)) return t;
+  const pending = t.pending.filter((x) => x !== r.id);
+  if (r.ok) return { ...t, ok: t.ok + 1, pending };
+  const reason = r.reason || 'failed';
+  return { ...t, refused: { ...t.refused, [reason]: (t.refused[reason] ?? 0) + 1 }, pending };
+}
+
+export function tallyDone(t: BulkTally): boolean {
+  return t.pending.length === 0;
 }
