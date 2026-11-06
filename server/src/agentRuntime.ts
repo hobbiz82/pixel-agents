@@ -21,6 +21,7 @@ import {
   ensureProjectScan,
   forgetUserClosed,
   isTrackedProjectDir,
+  markDeadTranscript,
   reassignAgentToFile,
   scanForBackgroundAgentFiles,
   scanForTeammateFiles,
@@ -387,6 +388,22 @@ export class AgentRuntime {
   allowReadoption(file: string): void {
     this.dismissalTracker.clearDismissal(file);
     forgetUserClosed(file);
+  }
+
+  /**
+   * mptl fork: a Claude session whose process is gone (SessionMetaPoller). Same cleanup
+   * as SessionEnd, but not a dismissal: if the session is resumed later it comes back.
+   */
+  removeDeadSession(id: number, reason = 'session process gone'): void {
+    const agent = this.store.get(id);
+    if (!agent) return;
+    console.log(`[Pixel Agents] Watcher: Agent ${id} - ${reason}, removing`);
+    this.removeTeammates(id);
+    this.subagentWatch.removeByLead(id);
+    this.unregisterAgent(agent.sessionId);
+    this.knownJsonlFiles.delete(agent.jsonlFile);
+    markDeadTranscript(agent.jsonlFile);
+    this.removeAgent(id);
   }
 
   closeAgent(id: number): void {

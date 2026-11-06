@@ -11,6 +11,21 @@ export interface SessionFacts extends SessionStatus {
   provider?: 'claude' | 'codex';
   pid?: number;
   rssBytes?: number;
+  origin?: SessionOrigin;
+}
+
+/** Where anh finds a Claude session: the Claude app, a Terminal window, claude.ai/code, or an SDK program. */
+export type SessionOrigin = 'app' | 'terminal' | 'remote' | 'sdk';
+
+const ORIGIN_VI: Record<SessionOrigin, string> = {
+  app: 'Ở app Claude',
+  terminal: 'Ở Terminal',
+  remote: 'Ở claude.ai/code',
+  sdk: 'Chạy nền (SDK)',
+};
+
+export function originLabel(origin: SessionOrigin | undefined): string {
+  return origin ? ORIGIN_VI[origin] : '';
 }
 
 /** Idle this long or more → the character gets an amber "Rảnh N giờ" badge. */
@@ -66,12 +81,13 @@ export function providerTag(
   return tag ? { label: tag.label, color: tag.color } : null;
 }
 
-/** Status · RAM · Context · PID, skipping what the session does not have. */
+/** Status · RAM · Context · Origin · PID, skipping what the session does not have. */
 export function sessionDetail(meta: SessionFacts, now: number, contextPct: number | null): string {
   return [
     statusLabel(meta, now),
     meta.rssBytes !== undefined ? `RAM ${formatRam(meta.rssBytes)}` : null,
     contextPct !== null ? `Context ${contextPct}%` : null,
+    originLabel(meta.origin) || null,
     meta.pid !== undefined ? `PID ${meta.pid}` : null,
   ]
     .filter(Boolean)

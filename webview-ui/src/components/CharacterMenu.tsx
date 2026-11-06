@@ -72,6 +72,11 @@ export function CharacterMenu({
         <span className={row.longIdle ? undefined : 'text-text-muted'}>{row.statusText}</span>
         {row.ramText && <span className="text-text-muted"> · RAM {row.ramText}</span>}
       </div>
+      {row.whereText && (
+        <div className="text-xs text-text-muted" data-testid="session-where">
+          {row.whereText}
+        </div>
+      )}
       {row.project && <div className="text-xs text-text-muted">Project: {row.project}</div>}
       {row.folder && row.folder !== row.project && (
         <div className="text-xs text-text-muted break-all">Thư mục: {row.folder}</div>

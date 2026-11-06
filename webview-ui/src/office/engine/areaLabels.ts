@@ -54,3 +54,36 @@ export function areaLabelSpots(
       : { col: a.sumX / a.count + 0.5, row: a.sumY / a.count + 0.5 }),
   }));
 }
+
+export interface PixelRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * mptl fork (Đ3): the sign board behind a room name, in screen pixels.
+ * `board` is the plank that holds the text; `frame` is the Area-coloured
+ * border around it (one border width bigger on every side). Rounded to whole
+ * pixels so the board stays crisp at every zoom.
+ */
+export function signBoardRects(
+  cx: number,
+  cy: number,
+  textWidth: number,
+  fontSize: number,
+  zoom: number,
+): { board: PixelRect; frame: PixelRect } {
+  const padX = Math.round(fontSize * 0.6);
+  const padY = Math.round(fontSize * 0.35);
+  const border = Math.max(1, Math.round(zoom));
+  const w = Math.round(textWidth) + padX * 2;
+  const h = Math.round(fontSize) + padY * 2;
+  const x = Math.round(cx - w / 2);
+  const y = Math.round(cy - h / 2);
+  return {
+    board: { x, y, w, h },
+    frame: { x: x - border, y: y - border, w: w + border * 2, h: h + border * 2 },
+  };
+}

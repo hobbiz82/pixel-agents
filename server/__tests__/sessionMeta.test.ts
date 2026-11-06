@@ -10,6 +10,7 @@ import {
   parsePsTree,
   parseSessionRecord,
   sameMeta,
+  sessionMetaMessage,
   SessionMetaPoller,
   type SessionRecord,
   transcriptPathFor,
@@ -64,6 +65,64 @@ describe('parseSessionRecord', () => {
       pid: 1,
       sessionId: 's',
     });
+  });
+});
+
+describe('session origin (where anh can find the session)', () => {
+  it('a session started by the Claude app is found in the app', () => {
+    expect(
+      parseSessionRecord({ pid: 1, sessionId: 's', entrypoint: 'claude-desktop' })?.origin,
+    ).toBe('app');
+  });
+  it('the Claude app keeps "app" even when Remote Control is on', () => {
+    expect(
+      parseSessionRecord({
+        pid: 1,
+        sessionId: 's',
+        entrypoint: 'claude-desktop',
+        bridgeSessionId: 'b',
+      })?.origin,
+    ).toBe('app');
+  });
+  it('a `claude` started in a Terminal window is found in that Terminal', () => {
+    expect(parseSessionRecord({ pid: 1, sessionId: 's', entrypoint: 'cli' })?.origin).toBe(
+      'terminal',
+    );
+  });
+  it('a session served over Remote Control is found on claude.ai/code', () => {
+    expect(
+      parseSessionRecord({ pid: 1, sessionId: 's', entrypoint: 'sdk-cli', bridgeSessionId: 'b' })
+        ?.origin,
+    ).toBe('remote');
+    expect(
+      parseSessionRecord({ pid: 1, sessionId: 's', entrypoint: 'cli', bridgeSessionId: 'b' })
+        ?.origin,
+    ).toBe('remote');
+  });
+  it('an SDK session with no Remote Control is run by another program', () => {
+    expect(parseSessionRecord({ pid: 1, sessionId: 's', entrypoint: 'sdk-cli' })?.origin).toBe(
+      'sdk',
+    );
+  });
+  it('an unknown or missing entrypoint gives no origin rather than a guess', () => {
+    expect(parseSessionRecord({ pid: 1, sessionId: 's' })?.origin).toBeUndefined();
+    expect(
+      parseSessionRecord({ pid: 1, sessionId: 's', entrypoint: 'vscode' })?.origin,
+    ).toBeUndefined();
+  });
+  it('the origin travels on the meta and a change of origin is worth a re-send', () => {
+    const metas = buildSessionMetas(
+      [{ pid: 10, sessionId: 's', origin: 'terminal' }],
+      new Map([[10, 1]]),
+    );
+    expect(metas.get('s')?.origin).toBe('terminal');
+    const m = { pid: 1, rssBytes: 1, origin: 'app' as const };
+    expect(sameMeta(m, { ...m })).toBe(true);
+    expect(sameMeta(m, { ...m, origin: 'remote' })).toBe(false);
+  });
+  it('the office message carries the origin but never the folder path', () => {
+    const msg = sessionMetaMessage(3, { pid: 1917, origin: 'terminal', cwd: '/Users/x/repo' });
+    expect(msg).toEqual({ type: 'agentSessionMeta', id: 3, pid: 1917, origin: 'terminal' });
   });
 });
 

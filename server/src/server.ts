@@ -6,6 +6,7 @@ import * as path from 'path';
 
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import type { AssistHub } from './assist.js';
 import type {
   AssetCache,
   ReloadAssetsSideEffect,
@@ -79,6 +80,9 @@ export class PixelAgentsServer {
      *  the old one. Refused while another standalone server is running: it
      *  would keep honouring the old token until it restarts. */
     rotateToken?: boolean;
+    /** mptl fork (Đ3): quota, held permission prompts, notifications. */
+    assist?: AssistHub;
+    onSetClaudeQuotaReader?: (enabled: boolean) => Promise<void> | void;
   }): Promise<ServerConfig> {
     const embedded = options?.embedded ?? true;
     const wantsSpa = !embedded;
@@ -144,6 +148,8 @@ export class PixelAgentsServer {
       onReloadAssets: options?.onReloadAssets,
       ptyManager: options?.ptyManager,
       allowedHosts: standalone?.allowedHosts,
+      assist: options?.assist,
+      onSetClaudeQuotaReader: options?.onSetClaudeQuotaReader,
     });
 
     this.app = app;

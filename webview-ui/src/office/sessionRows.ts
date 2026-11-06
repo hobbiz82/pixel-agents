@@ -4,7 +4,13 @@
  */
 import { archiveBlock } from './sessionArchive.js';
 import type { SessionFacts } from './sessionMetaLabels.js';
-import { formatRam, isLongIdle, providerTag, statusLabel } from './sessionMetaLabels.js';
+import {
+  formatRam,
+  isLongIdle,
+  originLabel,
+  providerTag,
+  statusLabel,
+} from './sessionMetaLabels.js';
 
 export interface SessionInput {
   id: number;
@@ -19,6 +25,8 @@ export interface SessionRow {
   id: number;
   name: string;
   folder: string;
+  /** Where anh finds the session (Claude app, Terminal, claude.ai/code); '' when unknown. */
+  whereText: string;
   provider: { label: string; color: string } | null;
   providerId: 'claude' | 'codex' | undefined;
   /** Repo the session works in; the folder when the server sent none. */
@@ -57,6 +65,7 @@ function toRow(input: SessionInput, now: number): SessionRow {
     id: input.id,
     name: meta.name || input.folder || `Agent ${input.id}`,
     folder: input.folder ?? '',
+    whereText: originLabel(meta.origin),
     provider: providerTag(meta),
     providerId: meta.provider,
     project: meta.project || input.folder || '',

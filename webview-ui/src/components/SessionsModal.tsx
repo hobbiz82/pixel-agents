@@ -444,6 +444,11 @@ export function SessionsModal({
                       </td>
                       <td className="py-3 px-6 text-text-muted whitespace-nowrap">
                         {row.folder || '—'}
+                        {row.whereText && (
+                          <div className="text-xs" data-testid="session-where">
+                            {row.whereText}
+                          </div>
+                        )}
                       </td>
                       <td
                         className={`py-3 px-6 whitespace-nowrap ${row.longIdle ? '' : 'text-text'}`}

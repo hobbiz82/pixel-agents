@@ -31,6 +31,10 @@ export type ServerMessage =
   | SessionRestoreResult
   | SessionInspection
   | ArchivedDeleteResult
+  | QuotaStatus
+  | PermissionRequests
+  | PermissionDecisionResult
+  | AssistSettings
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -85,7 +89,11 @@ export type ClientMessage =
   | ArchiveSession
   | RestoreSession
   | InspectSession
-  | DeleteArchived;
+  | DeleteArchived
+  | SetClaudeQuotaReader
+  | DecidePermission
+  | SetAssistSettings
+  | PageVisibility;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -221,9 +229,12 @@ export interface AgentSessionMeta {
   status?: string;
   statusSince?: number;
   project?: string;
+  origin?: SessionOrigin;
 }
 
 export type SessionProvider = 'claude' | 'codex';
+
+export type SessionOrigin = 'app' | 'terminal' | 'remote' | 'sdk';
 
 export interface ArchivedSessions {
   type: 'archivedSessions';
@@ -298,6 +309,59 @@ export interface ArchivedDeleteResult {
   ok: number;
   items: number;
   refused: Record<string, number>;
+}
+
+export interface QuotaStatus {
+  type: 'quotaStatus';
+  claude?: ProviderQuota;
+  codex?: ProviderQuota;
+  claudeReader?: ClaudeReaderState;
+}
+
+export interface ProviderQuota {
+  fiveHour?: QuotaWindow;
+  sevenDay?: QuotaWindow;
+  updatedAt: number;
+  source?: QuotaSource;
+}
+
+export interface QuotaWindow {
+  usedPercent: number;
+  resetsAt: number;
+}
+
+export type QuotaSource = 'live' | 'log';
+
+export type ClaudeReaderState = 'none' | 'ours' | 'other';
+
+export interface PermissionRequests {
+  type: 'permissionRequests';
+  requests: PermissionRequestEntry[];
+}
+
+export interface PermissionRequestEntry {
+  requestId: string;
+  sessionId: string;
+  agentId?: number;
+  toolName: string;
+  summary: string;
+  cwd?: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+export interface PermissionDecisionResult {
+  type: 'permissionDecisionResult';
+  requestId: string;
+  ok: boolean;
+  reason?: string;
+}
+
+export interface AssistSettings {
+  type: 'assistSettings';
+  approveFromPage: boolean;
+  notifyMac: boolean;
+  holdSeconds: number;
 }
 
 export interface LayoutLoaded {
@@ -619,10 +683,10 @@ export interface ArchiveSession {
   type: 'archiveSession';
   id: number;
   folder?: string;
-  stop?: AnonymousSchema_328[];
+  stop?: AnonymousSchema_350[];
 }
 
-export interface AnonymousSchema_328 {
+export interface AnonymousSchema_350 {
   pid: number;
   start: string;
 }
@@ -640,4 +704,28 @@ export interface InspectSession {
 export interface DeleteArchived {
   type: 'deleteArchived';
   sessionIds: string[];
+}
+
+export interface SetClaudeQuotaReader {
+  type: 'setClaudeQuotaReader';
+  enabled: boolean;
+}
+
+export interface DecidePermission {
+  type: 'decidePermission';
+  requestId: string;
+  decision: PermissionDecision;
+}
+
+export type PermissionDecision = 'allow' | 'deny' | 'ask';
+
+export interface SetAssistSettings {
+  type: 'setAssistSettings';
+  approveFromPage?: boolean;
+  notifyMac?: boolean;
+}
+
+export interface PageVisibility {
+  type: 'pageVisibility';
+  visible: boolean;
 }

@@ -16,6 +16,7 @@ import {
   formatRam,
   IDLE_ALERT_MS,
   isLongIdle,
+  originLabel,
   providerTag,
   sessionDetail,
   statusLabel,
@@ -97,5 +98,31 @@ test('session detail leaves out RAM and PID when the session has none (Codex)', 
       null,
     ),
     'Đang chạy 0 phút · RAM 2,0 GB · PID 12',
+  );
+});
+
+test('origin says where anh finds the session (app, Terminal, claude.ai/code, SDK)', () => {
+  assert.equal(originLabel('app'), 'Ở app Claude');
+  assert.equal(originLabel('terminal'), 'Ở Terminal');
+  assert.equal(originLabel('remote'), 'Ở claude.ai/code');
+  assert.equal(originLabel('sdk'), 'Chạy nền (SDK)');
+  assert.equal(originLabel(undefined), '');
+});
+
+test('session detail puts the origin right before the PID (mptl-kho-96 is in Terminal)', () => {
+  const now = 100 * HOUR;
+  assert.equal(
+    sessionDetail(
+      {
+        provider: 'claude',
+        pid: 1917,
+        origin: 'terminal',
+        status: 'idle',
+        statusSince: now - 3 * HOUR,
+      },
+      now,
+      null,
+    ),
+    'Rảnh 3 giờ · Ở Terminal · PID 1917',
   );
 });

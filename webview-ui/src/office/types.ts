@@ -271,6 +271,8 @@ export interface Character {
     statusSince?: number;
     /** Repo folder name (worktrees folded into their parent). */
     project?: string;
+    /** Where anh finds the session: Claude app, Terminal, claude.ai/code, or an SDK program. */
+    origin?: 'app' | 'terminal' | 'remote' | 'sdk';
   };
 }
 

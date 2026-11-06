@@ -1025,6 +1025,7 @@ export function adoptExternalSessionFromHook(
   persistAgents: () => void,
   onAgentCreated?: (agent: AgentState) => void,
 ): void {
+  if (isHiddenSession(sessionId)) return;
   if (transcriptPath) {
     // File-based provider (Claude, Codex): adopt with JSONL file watching
     // Guard: don't adopt if file is already tracked by an agent
@@ -1186,6 +1187,32 @@ export function setLiveSessionSource(source: (() => LiveSession[]) | null): void
 /** Live transcripts the user closed with X: never brought back while the session runs. */
 const userClosedLive = new Set<string>();
 
+/**
+ * mptl fork: transcripts of Claude sessions whose process is gone. The transcript
+ * scans adopt any file written in the last minutes, which would bring the character
+ * straight back; they skip these until the session is live again.
+ */
+const deadTranscripts = new Set<string>();
+
+export function markDeadTranscript(file: string): void {
+  deadTranscripts.add(path.resolve(file));
+}
+
+export function isDeadTranscript(file: string): boolean {
+  return deadTranscripts.has(path.resolve(file));
+}
+
+/** mptl fork: sessions archived on the page (archiveHide.ts) that no scan may adopt. */
+let hiddenSessionCheck: ((sessionId: string) => boolean) | null = null;
+
+export function setHiddenSessionCheck(fn: ((sessionId: string) => boolean) | null): void {
+  hiddenSessionCheck = fn;
+}
+
+function isHiddenSession(sessionId: string): boolean {
+  return hiddenSessionCheck?.(sessionId) ?? false;
+}
+
 /** mptl fork: a session restored from the archive may get its character back. */
 export function forgetUserClosed(file: string): void {
   userClosedLive.delete(file);
@@ -1208,10 +1235,12 @@ export function adoptLiveSessions(
   persistAgents: () => void,
 ): void {
   for (const { file, cwd, provider, ...rest } of live) {
+    deadTranscripts.delete(path.resolve(file));
     if (!fs.existsSync(file)) continue;
     // A session that changed cwd (e.g. entered a worktree) keeps its id but writes
     // a new transcript; a character still on the old file is a stale duplicate.
     const sessionId = rest.sessionId ?? path.basename(file, '.jsonl');
+    if (isHiddenSession(sessionId)) continue;
     const stale: number[] = [];
     for (const [id, agent] of agents) {
       if (agent.isExternal && agent.sessionId === sessionId && !pathsMatch(agent.jsonlFile, file)) {
@@ -1408,6 +1437,8 @@ export function scanExternalDir(
 
     // Skip files already known (seeded or adopted).
     if (knownJsonlFiles.has(file)) continue;
+    if (isDeadTranscript(file)) continue;
+    if (isHiddenSession(path.basename(file, '.jsonl'))) continue;
 
     // Skip files permanently dismissed by /clear (never re-adopted)
     if (dismissalTracker!.isPermanentlyDismissed(file)) continue;
@@ -1508,7 +1539,7 @@ function directoryNameFromProjectDir(dirName: string): string {
 
 /** Scan every session root the active provider exposes for active sessions
  *  (global discovery — powers the "Watch All Sessions" toggle). */
-function scanGlobalProjectDirs(
+export function scanGlobalProjectDirs(
   knownJsonlFiles: Set<string>,
   nextAgentIdRef: { current: number },
   agents: AgentStateStore,
@@ -1551,6 +1582,8 @@ function scanGlobalProjectDirs(
 
     for (const file of files) {
       if (knownJsonlFiles.has(file)) continue;
+      if (isDeadTranscript(file)) continue;
+      if (isHiddenSession(path.basename(file, '.jsonl'))) continue;
       let tracked = false;
       for (const agent of agents.values()) {
         if (pathsMatch(agent.jsonlFile, file)) {

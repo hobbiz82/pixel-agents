@@ -9,15 +9,17 @@
  * Read-only: nothing here writes or signals a process.
  */
 import { execFile } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { AgentStateStore } from './agentStateStore.js';
+import type { ArchivedRef, ArchiveHide } from './archiveHide.js';
 import { type CodexSession, readCodexSessions } from './codexSessions.js';
 import type { LiveSession } from './fileWatcher.js';
+import { defaultArchiveIO, foldArchiveLog } from './sessionArchive.js';
 import { projectOfCwd } from './sessionProject.js';
-import type { SessionMeta } from './types.js';
+import type { SessionMeta, SessionOrigin } from './types.js';
 
 export interface SessionRecord {
   pid: number;
@@ -26,6 +28,20 @@ export interface SessionRecord {
   cwd?: string;
   status?: string;
   statusUpdatedAt?: number;
+  origin?: SessionOrigin;
+}
+
+/**
+ * Where anh can find a Claude session: the Claude app, a Terminal window, claude.ai/code
+ * (Remote Control) or another program (SDK). From `entrypoint` + `bridgeSessionId` in
+ * ~/.claude/sessions/<pid>.json (measured 06/11: claude-desktop · cli · sdk-cli).
+ */
+export function originOf(entrypoint: unknown, bridgeSessionId: unknown): SessionOrigin | undefined {
+  if (entrypoint === 'claude-desktop') return 'app';
+  if (typeof bridgeSessionId === 'string' && bridgeSessionId) return 'remote';
+  if (entrypoint === 'cli') return 'terminal';
+  if (entrypoint === 'sdk-cli') return 'sdk';
+  return undefined;
 }
 
 /** RAM changes smaller than this fraction are not worth a re-send. */
@@ -41,6 +57,8 @@ export function parseSessionRecord(raw: unknown): SessionRecord | null {
   if (typeof r.cwd === 'string') rec.cwd = r.cwd;
   if (typeof r.status === 'string') rec.status = r.status;
   if (typeof r.statusUpdatedAt === 'number') rec.statusUpdatedAt = r.statusUpdatedAt;
+  const origin = originOf(r.entrypoint, r.bridgeSessionId);
+  if (origin) rec.origin = origin;
   return rec;
 }
 
@@ -103,6 +121,7 @@ export function buildSessionMetas(
     const project = projectOfCwd(rec.cwd);
     if (project) meta.project = project;
     if (rec.cwd) meta.cwd = rec.cwd;
+    if (rec.origin) meta.origin = rec.origin;
     metas.set(sessionId, meta);
   }
   return metas;
@@ -132,16 +151,76 @@ export function codexMeta(s: CodexSession): SessionMeta {
 export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
   if (!a) return false;
   if (a.provider !== b.provider || a.pid !== b.pid || a.name !== b.name) return false;
-  if (a.project !== b.project || a.cwd !== b.cwd) return false;
+  if (a.project !== b.project || a.cwd !== b.cwd || a.origin !== b.origin) return false;
   if (a.status !== b.status || a.statusSince !== b.statusSince) return false;
   if (a.rssBytes === undefined || b.rssBytes === undefined) return a.rssBytes === b.rssBytes;
   const base = Math.max(a.rssBytes, 1);
   return Math.abs(b.rssBytes - a.rssBytes) / base < RSS_CHANGE_RATIO;
 }
 
+/**
+ * Time of the last user or assistant line in a transcript (text of its tail).
+ * `statusUpdatedAt` is rewritten when the Claude app restarts its sessions and the
+ * file mtime moves with bookkeeping lines, so only these lines say when the session
+ * last did anything (measured 06/11 on 17 live sessions).
+ */
+export function lastActivityFromText(text: string): number | undefined {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (!l.includes('"timestamp"')) continue;
+    let r: unknown;
+    try {
+      r = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (!r || typeof r !== 'object') continue;
+    const { type, timestamp } = r as { type?: unknown; timestamp?: unknown };
+    if (type !== 'user' && type !== 'assistant') continue;
+    if (typeof timestamp !== 'string') continue;
+    const t = Date.parse(timestamp);
+    if (Number.isFinite(t)) return t;
+  }
+  return undefined;
+}
+
+/** Tail sizes tried in turn; a long run of bookkeeping lines needs the larger one. */
+const ACTIVITY_TAIL_BYTES = [256 * 1024, 4 * 1024 * 1024];
+
+export async function readLastActivity(file: string): Promise<number | undefined> {
+  const fh = await open(file, 'r');
+  try {
+    const { size } = await fh.stat();
+    for (const want of ACTIVITY_TAIL_BYTES) {
+      const len = Math.min(size, want);
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, size - len);
+      const t = lastActivityFromText(buf.toString('utf8'));
+      if (t !== undefined || len === size) return t;
+    }
+    return undefined;
+  } finally {
+    await fh.close();
+  }
+}
+
+/** A Claude character is judged dead only after this many checks in a row. */
+const DEAD_AFTER_TICKS = 2;
+/** ...and only when its transcript has not been written for this long. */
+const DEAD_QUIET_MS = 120_000;
+
 export interface SessionMetaIO {
   readRecords: () => Promise<SessionRecord[]>;
   readPs: () => Promise<string>;
+  /** Last user/assistant time of a transcript; absent = use the status time. */
+  readLastActivity?: (file: string) => Promise<number | undefined>;
+  /** Transcript mtime (ms); absent = never judge a character dead. */
+  transcriptMtime?: (file: string) => Promise<number | undefined>;
+  /** Every `<projectsRoot>/<dir>/<id>.jsonl`; absent = only the cwd-derived path is tried. */
+  listSessionFiles?: () => Promise<string[]>;
+  /** Archived sessions (folded archive log), for ArchiveHide. */
+  readArchiveLog?: () => Promise<ArchivedRef[]>;
   /** Codex sessions open recently; absent = Codex not watched. */
   readCodex?: () => Promise<CodexSession[]>;
 }
@@ -156,12 +235,151 @@ export class SessionMetaPoller {
   private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
   private live: LiveSession[] = [];
+  private readonly activityCache = new Map<string, { key: string; at: number | undefined }>();
+  private readonly misses = new Map<number, number>();
+  private gone: ((id: number) => void) | undefined;
+  private hidden: ((id: number) => void) | undefined;
+  private hide: ArchiveHide | undefined;
 
   constructor(
     private readonly store: AgentStateStore,
     private readonly io: SessionMetaIO = defaultIO(),
     private readonly projectsRoot = path.join(os.homedir(), '.claude', 'projects'),
   ) {}
+
+  setArchiveHide(h: ArchiveHide): void {
+    this.hide = h;
+  }
+
+  /** Called with a character whose session anh archived on the page (archiveHide.ts). */
+  onSessionHidden(cb: (id: number) => void): void {
+    this.hidden = cb;
+  }
+
+  /**
+   * The transcript a Claude session is writing: the newest `<sessionId>.jsonl` in any
+   * project dir. The record's cwd can point elsewhere: measured 06/11, a session whose
+   * record says a worktree was writing under the main repo's dir, while the worktree
+   * file had not had a turn for 15 days.
+   */
+  private async transcriptOf(
+    rec: SessionRecord,
+    byId: Map<string, string[]>,
+  ): Promise<string | null> {
+    const derived = transcriptPathFor(this.projectsRoot, rec);
+    const found = byId.get(rec.sessionId) ?? [];
+    const candidates = [...new Set([...(derived ? [derived] : []), ...found])];
+    if (candidates.length <= 1 || !this.io.transcriptMtime) return found[0] ?? derived;
+    let best: string | null = null;
+    let bestAt = -Infinity;
+    for (const file of candidates) {
+      let at: number | undefined;
+      try {
+        at = await this.io.transcriptMtime(file);
+      } catch {
+        at = undefined;
+      }
+      if (at !== undefined && at > bestAt) {
+        best = file;
+        bestAt = at;
+      }
+    }
+    return best ?? derived;
+  }
+
+  private async sessionFilesById(): Promise<Map<string, string[]>> {
+    const byId = new Map<string, string[]>();
+    if (!this.io.listSessionFiles) return byId;
+    try {
+      for (const file of await this.io.listSessionFiles()) {
+        const id = path.basename(file, '.jsonl');
+        const list = byId.get(id);
+        if (list) list.push(file);
+        else byId.set(id, [file]);
+      }
+    } catch {
+      // unreadable projects folder: fall back to the cwd-derived paths
+    }
+    return byId;
+  }
+
+  /** Called with a Claude character whose process is gone (SessionEnd can be missed). */
+  onSessionGone(cb: (id: number) => void): void {
+    this.gone = cb;
+  }
+
+  private async lastActivity(file: string): Promise<number | undefined> {
+    const read = this.io.readLastActivity;
+    if (!read) return undefined;
+    try {
+      const st = this.io.transcriptMtime ? await this.io.transcriptMtime(file) : undefined;
+      const key = String(st ?? '');
+      const hit = this.activityCache.get(file);
+      if (hit && st !== undefined && hit.key === key) return hit.at;
+      const at = await read(file);
+      this.activityCache.set(file, { key, at });
+      return at;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Remove Claude characters with no live process: missed SessionEnd, killed app, old transcript. */
+  private async pruneDead(aliveIds: Set<string>): Promise<void> {
+    const mtimeOf = this.io.transcriptMtime;
+    if (!mtimeOf || !this.gone) return;
+    const now = Date.now();
+    for (const [id, agent] of this.store) {
+      const isClaude = (agent.providerId ?? 'claude') === 'claude';
+      if (
+        !agent.isExternal ||
+        !isClaude ||
+        agent.leadAgentId !== undefined ||
+        aliveIds.has(agent.sessionId)
+      ) {
+        this.misses.delete(id);
+        continue;
+      }
+      let mtime: number | undefined;
+      try {
+        mtime = await mtimeOf(agent.jsonlFile);
+      } catch {
+        mtime = undefined;
+      }
+      if (mtime !== undefined && now - mtime < DEAD_QUIET_MS) {
+        this.misses.delete(id);
+        continue;
+      }
+      const n = (this.misses.get(id) ?? 0) + 1;
+      this.misses.set(id, n);
+      if (n >= DEAD_AFTER_TICKS) {
+        this.misses.delete(id);
+        this.gone(id);
+      }
+    }
+    for (const id of this.misses.keys()) if (!this.store.get(id)) this.misses.delete(id);
+  }
+
+  private async refreshArchive(): Promise<void> {
+    if (!this.hide || !this.io.readArchiveLog) return;
+    try {
+      this.hide.setArchived(await this.io.readArchiveLog());
+    } catch {
+      // unreadable log: keep the last list
+    }
+  }
+
+  private removeHidden(): void {
+    const hide = this.hide;
+    if (!hide || !this.hidden) return;
+    const ids: number[] = [];
+    for (const [id, agent] of this.store) {
+      if (agent.isExternal && agent.leadAgentId === undefined && hide.isHidden(agent.sessionId)) {
+        ids.push(id);
+      }
+    }
+    for (const id of ids) this.hidden(id);
+  }
 
   /** Every session alive at the last tick: Claude by pid, Codex by recent rollout. */
   liveSessions(): LiveSession[] {
@@ -180,12 +398,31 @@ export class SessionMetaPoller {
       ]);
       const rss = parsePsTree(psOut);
       const metas = buildSessionMetas(records, rss);
+      const byId = await this.sessionFilesById();
+      const files = new Map<SessionRecord, string | null>();
+      for (const rec of records) files.set(rec, await this.transcriptOf(rec, byId));
       const live: LiveSession[] = records.flatMap((rec) => {
-        const file = rss.has(rec.pid) ? transcriptPathFor(this.projectsRoot, rec) : null;
+        const file = rss.has(rec.pid) ? (files.get(rec) ?? null) : null;
         return file && rec.cwd
           ? [{ file, cwd: rec.cwd, sessionId: rec.sessionId, provider: 'claude' as const }]
           : [];
       });
+      await this.refreshArchive();
+      for (const rec of records) {
+        const meta = metas.get(rec.sessionId);
+        if (!meta || meta.pid !== rec.pid) continue;
+        if (meta.status !== 'idle' && meta.status !== 'waiting') {
+          this.hide?.noteActivity(rec.sessionId, undefined, meta.status);
+          continue;
+        }
+        const file = files.get(rec) ?? null;
+        const at = file ? await this.lastActivity(file) : undefined;
+        this.hide?.noteActivity(rec.sessionId, at, meta.status);
+        if (at !== undefined && (meta.statusSince === undefined || at < meta.statusSince)) {
+          meta.statusSince = at;
+        }
+      }
+      const aliveIds = new Set(metas.keys());
       for (const c of codex) {
         metas.set(c.sessionId, codexMeta(c));
         live.push({ file: c.file, cwd: c.cwd, sessionId: c.sessionId, provider: 'codex' });
@@ -197,6 +434,8 @@ export class SessionMetaPoller {
         agent.sessionMeta = meta;
         this.store.broadcast(sessionMetaMessage(id, meta));
       }
+      await this.pruneDead(aliveIds);
+      this.removeHidden();
     } catch {
       // Unreadable folder or failed `ps`: keep the last known meta.
     } finally {
@@ -219,6 +458,7 @@ export class SessionMetaPoller {
 
 export function defaultIO(
   sessionsDir = path.join(os.homedir(), '.claude', 'sessions'),
+  projectsRoot = path.join(os.homedir(), '.claude', 'projects'),
 ): SessionMetaIO {
   return {
     readRecords: async () => {
@@ -246,5 +486,21 @@ export function defaultIO(
         );
       }),
     readCodex: () => readCodexSessions(),
+    readLastActivity,
+    transcriptMtime: async (file) => (await stat(file)).mtimeMs,
+    listSessionFiles: async () => {
+      const out: string[] = [];
+      for (const dir of await readdir(projectsRoot)) {
+        try {
+          for (const n of await readdir(path.join(projectsRoot, dir))) {
+            if (n.endsWith('.jsonl')) out.push(path.join(projectsRoot, dir, n));
+          }
+        } catch {
+          // a file, or removed between the two readdirs
+        }
+      }
+      return out;
+    },
+    readArchiveLog: async () => foldArchiveLog(await defaultArchiveIO().readLog()),
   };
 }

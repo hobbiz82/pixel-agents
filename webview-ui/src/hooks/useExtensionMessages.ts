@@ -2,6 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { HooksConsentRequest } from '../../../core/src/messages.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
+import {
+  type AssistSettings,
+  type HeldPrompt,
+  parseAssistSettings,
+  parsePermissionRequests,
+  parseQuotaStatus,
+  type QuotaView,
+} from '../office/assistView.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
@@ -172,6 +180,12 @@ interface ExtensionMessageState {
   inspections: Record<number, Inspection>;
   /** Call before sending a bulk archive: its results then show as one running count. */
   startArchiveBatch: (ids: number[]) => void;
+  /** mptl fork (Đ3): Claude + Codex usage limits. */
+  quota: QuotaView;
+  /** mptl fork (Đ3): permission prompts held for the page (tokened office only). */
+  heldPrompts: HeldPrompt[];
+  /** mptl fork (Đ3): approve-from-page / macOS notification settings. */
+  assistSettings: AssistSettings;
   // Terminal (standalone only; always false/empty under VS Code, which owns its
   // own terminals and never sends these messages)
   terminalAvailable: boolean;
@@ -242,6 +256,11 @@ export function useExtensionMessages(
   // Never sent under VS Code, so it stays false there.
   const [officeReadOnly, setOfficeReadOnly] = useState(false);
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const [quota, setQuota] = useState<QuotaView>({ claudeReader: 'none' });
+  const [heldPrompts, setHeldPrompts] = useState<HeldPrompt[]>([]);
+  const [assistSettings, setAssistSettings] = useState<AssistSettings>(() =>
+    parseAssistSettings({}),
+  );
   const [archiveNotice, setArchiveNotice] = useState<{
     ok: boolean;
     text: string;
@@ -326,6 +345,21 @@ export function useExtensionMessages(
         return;
       }
 
+      if (msg.type === 'quotaStatus') {
+        setQuota(parseQuotaStatus(msg));
+        return;
+      }
+
+      if (msg.type === 'permissionRequests') {
+        setHeldPrompts(parsePermissionRequests(msg.requests));
+        return;
+      }
+
+      if (msg.type === 'assistSettings') {
+        setAssistSettings(parseAssistSettings(msg));
+        return;
+      }
+
       if (msg.type === 'archivedSessions') {
         setArchivedSessions(parseArchivedSessions(msg.sessions));
         return;
@@ -353,6 +387,7 @@ export function useExtensionMessages(
           text: archiveResultText({
             ok,
             reason: msg.reason as string | undefined,
+            provider: msg.provider as string | undefined,
             stopped: msg.stopped as { done: number; skipped: number } | undefined,
           }),
           at: Date.now(),
@@ -946,7 +981,7 @@ export function useExtensionMessages(
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
       } else if (msg.type === 'agentSessionMeta') {
-        // mptl fork: tool (Claude/Codex), session name, RAM, status
+        // mptl fork: tool (Claude/Codex), session name, RAM, status, where the session lives
         os.setAgentSessionMeta(msg.id as number, {
           provider: msg.provider as 'claude' | 'codex' | undefined,
           pid: msg.pid as number | undefined,
@@ -955,6 +990,7 @@ export function useExtensionMessages(
           status: msg.status as string | undefined,
           statusSince: msg.statusSince as number | undefined,
           project: msg.project as string | undefined,
+          origin: msg.origin as 'app' | 'terminal' | 'remote' | 'sdk' | undefined,
         });
       }
     };
@@ -1034,6 +1070,9 @@ export function useExtensionMessages(
     archiveNotice,
     inspections,
     startArchiveBatch,
+    quota,
+    heldPrompts,
+    assistSettings,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,

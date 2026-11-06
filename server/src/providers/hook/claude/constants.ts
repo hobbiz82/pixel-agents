@@ -9,6 +9,13 @@
 /** Output filename after esbuild compiles claude-hook.ts to CJS (source is .ts, output is .js) */
 export const CLAUDE_HOOK_SCRIPT_NAME = 'claude-hook.js';
 
+/** mptl fork (Đ3): status line writer that stores Claude's usage limits for the quota panel. */
+export const CLAUDE_STATUSLINE_SCRIPT_NAME = 'claude-statusline.js';
+
+/** mptl fork (Đ3): PermissionRequest hook timeout. The server holds a prompt for
+ *  the page at most assist.HOLD_SECONDS_MAX (50 s), so this leaves room. */
+export const PERMISSION_HOOK_TIMEOUT_SECONDS = 60;
+
 /** The script name we shipped before the rename to claude-hook.js. Still
  *  recognized as ours so a very old install can be migrated or removed. */
 export const LEGACY_HOOK_SCRIPT_NAME = 'pixel-agents-hook.js';

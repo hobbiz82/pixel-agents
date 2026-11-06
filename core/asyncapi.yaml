@@ -108,6 +108,11 @@ components:
         - $ref: '#/components/schemas/SessionRestoreResult'
         - $ref: '#/components/schemas/SessionInspection'
         - $ref: '#/components/schemas/ArchivedDeleteResult'
+        # Quota · approvals · notifications (mptl fork, Đ3)
+        - $ref: '#/components/schemas/QuotaStatus'
+        - $ref: '#/components/schemas/PermissionRequests'
+        - $ref: '#/components/schemas/PermissionDecisionResult'
+        - $ref: '#/components/schemas/AssistSettings'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -170,7 +175,207 @@ components:
         - $ref: '#/components/schemas/RestoreSession'
         - $ref: '#/components/schemas/InspectSession'
         - $ref: '#/components/schemas/DeleteArchived'
+        - $ref: '#/components/schemas/SetClaudeQuotaReader'
+        - $ref: '#/components/schemas/DecidePermission'
+        - $ref: '#/components/schemas/SetAssistSettings'
+        - $ref: '#/components/schemas/PageVisibility'
       discriminator: type
+
+    # ── mptl fork (Đ3): quota · approvals · notifications ─────────
+
+    QuotaWindow:
+      description: mptl fork. One usage-limit window.
+      type: object
+      additionalProperties: false
+      required: [usedPercent, resetsAt]
+      properties:
+        usedPercent:
+          type: number
+        resetsAt:
+          description: Epoch ms when the window resets.
+          type: integer
+
+    ProviderQuota:
+      description: mptl fork. Usage limits of one tool; updatedAt is the epoch-ms reading time.
+      type: object
+      additionalProperties: false
+      required: [updatedAt]
+      properties:
+        fiveHour:
+          $ref: '#/components/schemas/QuotaWindow'
+        sevenDay:
+          $ref: '#/components/schemas/QuotaWindow'
+        updatedAt:
+          type: integer
+        source:
+          $ref: '#/components/schemas/QuotaSource'
+
+    QuotaSource:
+      description: mptl fork. Codex only - live = asked from the Codex server, log = this Mac's rollouts (may lag).
+      type: string
+      enum: [live, log]
+
+    ClaudeReaderState:
+      description: mptl fork. Our Claude status line writer is absent, installed, or blocked by the user's own.
+      type: string
+      enum: [none, ours, other]
+
+    PermissionDecision:
+      description: mptl fork. allow / deny the tool call, or ask = let the app prompt now.
+      type: string
+      enum: [allow, deny, ask]
+
+    QuotaStatus:
+      description: |
+        mptl fork. Usage limits: Codex from its rollouts (token_count
+        rate_limits), Claude from the status line writer's file. A missing
+        provider means no reading yet. claudeReader says whether our status
+        line writer is installed in ~/.claude/settings.json (none / ours /
+        other = the user has their own status line, which we never replace).
+        Broadcast on change and sent on webviewReady.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: quotaStatus
+        claude:
+          $ref: '#/components/schemas/ProviderQuota'
+        codex:
+          $ref: '#/components/schemas/ProviderQuota'
+        claudeReader:
+          $ref: '#/components/schemas/ClaudeReaderState'
+
+    PermissionRequestEntry:
+      description: |
+        mptl fork. A Claude tool call held for a decision from the page. summary
+        is a short, single-line description of the tool input (a command, a
+        file path), cut to a few hundred characters.
+      type: object
+      additionalProperties: false
+      required: [requestId, sessionId, toolName, summary, createdAt, expiresAt]
+      properties:
+        requestId:
+          type: string
+        sessionId:
+          type: string
+        agentId:
+          type: integer
+        toolName:
+          type: string
+        summary:
+          type: string
+        cwd:
+          type: string
+        createdAt:
+          type: integer
+        expiresAt:
+          type: integer
+
+    PermissionRequests:
+      description: |
+        mptl fork. Every tool call currently held for a decision, oldest first.
+        Sent to tokened clients only, on webviewReady and on every change.
+      type: object
+      additionalProperties: false
+      required: [type, requests]
+      properties:
+        type:
+          const: permissionRequests
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionRequestEntry'
+
+    PermissionDecisionResult:
+      description: |
+        mptl fork. Reply to decidePermission, to the asking client only. reason
+        when refused: gone (already decided, timed out, or never held).
+      type: object
+      additionalProperties: false
+      required: [type, requestId, ok]
+      properties:
+        type:
+          const: permissionDecisionResult
+        requestId:
+          type: string
+        ok:
+          type: boolean
+        reason:
+          type: string
+
+    AssistSettings:
+      description: |
+        mptl fork. approveFromPage: hold Claude permission prompts so the page
+        can answer them (only while a tokened page is open and visible).
+        notifyMac: macOS notification when a session waits for the user.
+        holdSeconds: how long a prompt is held before the app asks as usual.
+      type: object
+      additionalProperties: false
+      required: [type, approveFromPage, notifyMac, holdSeconds]
+      properties:
+        type:
+          const: assistSettings
+        approveFromPage:
+          type: boolean
+        notifyMac:
+          type: boolean
+        holdSeconds:
+          type: integer
+
+    SetClaudeQuotaReader:
+      description: |
+        mptl fork. Install (enabled) or remove our status line writer in
+        ~/.claude/settings.json. Never replaces a status line the user has.
+      type: object
+      additionalProperties: false
+      required: [type, enabled]
+      properties:
+        type:
+          const: setClaudeQuotaReader
+        enabled:
+          type: boolean
+
+    DecidePermission:
+      description: |
+        mptl fork. Answer a held permission prompt. ask = let the app show its
+        own prompt now.
+      type: object
+      additionalProperties: false
+      required: [type, requestId, decision]
+      properties:
+        type:
+          const: decidePermission
+        requestId:
+          type: string
+        decision:
+          $ref: '#/components/schemas/PermissionDecision'
+
+    SetAssistSettings:
+      description: mptl fork. Change approveFromPage / notifyMac.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: setAssistSettings
+        approveFromPage:
+          type: boolean
+        notifyMac:
+          type: boolean
+
+    PageVisibility:
+      description: |
+        mptl fork. Whether this page is visible (document.visibilityState).
+        Prompts are held only while a tokened page is visible.
+      type: object
+      additionalProperties: false
+      required: [type, visible]
+      properties:
+        type:
+          const: pageVisibility
+        visible:
+          type: boolean
 
     # ── Server message variants ────────────────────────────────────
 
@@ -292,6 +497,15 @@ components:
       description: mptl fork. The tool that runs a session.
       type: string
       enum: [claude, codex]
+
+    SessionOrigin:
+      description: |
+        mptl fork. Where anh finds a Claude session: the Claude app (app), a
+        Terminal window (terminal), claude.ai/code over Remote Control
+        (remote), or a program driving the SDK (sdk). From the entrypoint and
+        bridgeSessionId in ~/.claude/sessions/<pid>.json.
+      type: string
+      enum: [app, terminal, remote, sdk]
 
     AgentActivityStatus:
       description: Activity state of an agent.
@@ -505,6 +719,8 @@ components:
           type: integer
         project:
           type: string
+        origin:
+          $ref: '#/components/schemas/SessionOrigin'
 
     ArchivedSessions:
       description: |

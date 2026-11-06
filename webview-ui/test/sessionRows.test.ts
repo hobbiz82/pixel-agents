@@ -11,6 +11,22 @@ const NOW = Date.UTC(2026, 10, 2, 5, 0, 0);
 const H = 3_600_000;
 
 describe('buildSessionRows', () => {
+  it('says where anh finds the session, and nothing when the server did not say', () => {
+    const rows = buildSessionRows(
+      [
+        { id: 1, folder: 'mptl-kho', meta: { provider: 'claude', pid: 1917, origin: 'terminal' } },
+        { id: 2, folder: 'skills', meta: { provider: 'claude', origin: 'app' } },
+        { id: 3, folder: 'x', meta: { provider: 'codex' } },
+      ],
+      NOW,
+    );
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.whereText]))).toEqual({
+      1: 'Ở Terminal',
+      2: 'Ở app Claude',
+      3: '',
+    });
+  });
+
   it('names a row after the session, with folder, tool, status and RAM', () => {
     const [row] = buildSessionRows(
       [

@@ -45,6 +45,12 @@ interface SettingsModalProps {
   /** mptl fork: one room per project with live sessions (built, never saved). */
   autoRooms?: boolean;
   onToggleAutoRooms?: () => void;
+  /** mptl fork (Đ3): answer Claude permission prompts from this page. */
+  approveFromPage?: boolean;
+  onToggleApproveFromPage?: () => void;
+  /** mptl fork (Đ3): macOS notification when a session waits for anh. */
+  notifyMac?: boolean;
+  onToggleNotifyMac?: () => void;
 }
 
 export function SettingsModal({
@@ -72,6 +78,10 @@ export function SettingsModal({
   onImportLayout,
   autoRooms,
   onToggleAutoRooms,
+  approveFromPage,
+  onToggleApproveFromPage,
+  notifyMac,
+  onToggleNotifyMac,
 }: SettingsModalProps) {
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -223,6 +233,28 @@ export function SettingsModal({
           label="Mỗi project 1 phòng"
           checked={autoRooms ?? false}
           onChange={onToggleAutoRooms}
+        />
+      )}
+      {onToggleApproveFromPage && (
+        <Checkbox
+          label={
+            <span className="flex flex-col">
+              <span>Duyệt lệnh Claude trên trang này</span>
+              <span className="text-xs text-text-muted leading-snug">
+                Khi trang đang mở và hiện trên màn hình, câu hỏi cho phép của Claude hiện ở đây
+                trước (tối đa 30 giây), rồi mới tới app Claude.
+              </span>
+            </span>
+          }
+          checked={approveFromPage ?? false}
+          onChange={onToggleApproveFromPage}
+        />
+      )}
+      {onToggleNotifyMac && (
+        <Checkbox
+          label="Thông báo macOS khi phiên chờ anh"
+          checked={notifyMac ?? true}
+          onChange={onToggleNotifyMac}
         />
       )}
       {showAreasAvailable && (

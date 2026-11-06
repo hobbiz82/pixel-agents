@@ -7,6 +7,7 @@ import { buildAgentDiagnostics } from './agentDiagnostics.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import type { LoadedAssets, LoadedCharacterSprites, LoadedPetSprites } from './assetLoader.js';
+import type { AssistClient, AssistHub } from './assist.js';
 import {
   getHooksConsent,
   getHooksEnabled,
@@ -98,6 +99,12 @@ export interface ClientMessageContext {
   inspectIO?: InspectIO;
   /** Moves archived session history to the macOS Trash (mptl fork). */
   trashIO?: TrashIO;
+  /** Quota, held permission prompts, notifications (mptl fork, Đ3). */
+  assist?: AssistHub;
+  /** This connection as seen by the assist hub. */
+  assistClient?: AssistClient;
+  /** Install/remove our Claude status line writer (mptl fork, Đ3). */
+  onSetClaudeQuotaReader?: (enabled: boolean) => Promise<void> | void;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -214,6 +221,42 @@ export function handleClientMessage(
 
     case 'deleteArchived':
       handleDeleteArchived(msg, send, ctx);
+      break;
+
+    // ── mptl fork (Đ3): quota · approvals · notifications ──
+    case 'decidePermission': {
+      if (!ctx.assist || !ctx.assistClient) break;
+      const requestId = typeof msg.requestId === 'string' ? msg.requestId : '';
+      const decision = msg.decision;
+      const ok =
+        (decision === 'allow' || decision === 'deny' || decision === 'ask') &&
+        ctx.assist.decide(requestId, decision, ctx.assistClient);
+      send({
+        type: 'permissionDecisionResult',
+        requestId,
+        ok,
+        ...(ok ? {} : { reason: 'gone' }),
+      });
+      break;
+    }
+
+    case 'setAssistSettings':
+      ctx.assist?.setSettings({
+        ...(typeof msg.approveFromPage === 'boolean'
+          ? { approveFromPage: msg.approveFromPage }
+          : {}),
+        ...(typeof msg.notifyMac === 'boolean' ? { notifyMac: msg.notifyMac } : {}),
+      });
+      break;
+
+    case 'pageVisibility':
+      if (ctx.assist && ctx.assistClient && typeof msg.visible === 'boolean') {
+        ctx.assist.setVisible(ctx.assistClient, msg.visible);
+      }
+      break;
+
+    case 'setClaudeQuotaReader':
+      if (typeof msg.enabled === 'boolean') void ctx.onSetClaudeQuotaReader?.(msg.enabled);
       break;
 
     case 'requestDiagnostics':
@@ -694,6 +737,9 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
         // unreadable log: the restore tab stays empty
       });
   }
+
+  // 0c. mptl fork (Đ3): assist settings, quota, held prompts (tokened only).
+  if (ctx.assist && ctx.assistClient) ctx.assist.welcome(ctx.assistClient);
 
   // 1. Provider capabilities (must arrive before any agent messages)
   send({
