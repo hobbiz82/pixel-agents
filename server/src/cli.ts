@@ -14,6 +14,7 @@ import * as path from 'path';
 
 import { AgentRuntime } from './agentRuntime.js';
 import { AgentStateStore } from './agentStateStore.js';
+import { ArchiveHide } from './archiveHide.js';
 import {
   buildAssetCache,
   loadAllCharacters,
@@ -35,7 +36,7 @@ import {
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
-import { setLiveSessionSource } from './fileWatcher.js';
+import { setHiddenSessionCheck, setLiveSessionSource } from './fileWatcher.js';
 import {
   copyStatusLineScript,
   installStatusLine,
@@ -294,6 +295,10 @@ async function main(): Promise<void> {
   const sessionMeta = new SessionMetaPoller(store);
   // mptl fork: every running session gets a character, not only recently active ones.
   setLiveSessionSource(() => sessionMeta.liveSessions());
+  // mptl fork: Claude sessions archived on the page stay out even when the app resumes them.
+  const archiveHide = new ArchiveHide();
+  sessionMeta.setArchiveHide(archiveHide);
+  setHiddenSessionCheck((sessionId) => archiveHide.isHidden(sessionId));
 
   // mptl fork (Đ3): quota panel, permission prompts answered from the page,
   // macOS notification when a session waits.
@@ -554,6 +559,9 @@ async function main(): Promise<void> {
 
     // mptl fork: a session that died without a SessionEnd we could match leaves the office.
     sessionMeta.onSessionGone((id) => runtime.removeDeadSession(id));
+    sessionMeta.onSessionHidden((id) =>
+      runtime.removeDeadSession(id, 'session archived on the page'),
+    );
     sessionMeta.start();
     quota.start();
 

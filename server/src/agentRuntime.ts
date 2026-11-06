@@ -394,10 +394,10 @@ export class AgentRuntime {
    * mptl fork: a Claude session whose process is gone (SessionMetaPoller). Same cleanup
    * as SessionEnd, but not a dismissal: if the session is resumed later it comes back.
    */
-  removeDeadSession(id: number): void {
+  removeDeadSession(id: number, reason = 'session process gone'): void {
     const agent = this.store.get(id);
     if (!agent) return;
-    console.log(`[Pixel Agents] Watcher: Agent ${id} - session process gone, removing`);
+    console.log(`[Pixel Agents] Watcher: Agent ${id} - ${reason}, removing`);
     this.removeTeammates(id);
     this.subagentWatch.removeByLead(id);
     this.unregisterAgent(agent.sessionId);
