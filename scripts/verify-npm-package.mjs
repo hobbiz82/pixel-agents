@@ -94,6 +94,19 @@ async function stopChild(child) {
   if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+async function removeDirWhenQuiet(dir, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (error?.code !== 'ENOTEMPTY' || Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 async function verifyInstalledTarball(tarballPath) {
   const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-agents-npm-smoke-'));
   const smokeHome = path.join(smokeRoot, 'home');
@@ -220,7 +233,9 @@ async function verifyInstalledTarball(tarballPath) {
     return { assetCounts: counts.slice(1).map(Number), port };
   } finally {
     if (child) await stopChild(child);
-    fs.rmSync(smokeRoot, { recursive: true, force: true });
+    // The CLI's Codex quota reader starts a short-lived `codex app-server`; after
+    // the CLI is stopped it can keep writing smokeHome/.codex for several seconds.
+    await removeDirWhenQuiet(smokeRoot);
   }
 }
 
