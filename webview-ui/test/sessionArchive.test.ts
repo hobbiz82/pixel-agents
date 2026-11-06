@@ -132,6 +132,7 @@ describe('bulk archive', () => {
     idleMs: null,
     rssBytes: null,
     ramText: '',
+    whereText: '',
     longIdle: false,
   };
   const ok = (id: number, providerId: 'claude' | 'codex' = 'claude') => ({

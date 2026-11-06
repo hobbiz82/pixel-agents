@@ -31,6 +31,7 @@ function row(p: Partial<SessionRow> & { id: number }): SessionRow {
     idleMs: null,
     rssBytes: null,
     ramText: '',
+    whereText: '',
     longIdle: false,
     archiveBlock: null,
     ...p,

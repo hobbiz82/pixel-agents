@@ -1,3 +1,10 @@
+import {
+  AREA_LABEL_ALPHA,
+  AREA_LABEL_SHADOW_ALPHA,
+  AREA_LABEL_SHADOW_COLOR,
+  AREA_SIGN_BOARD_COLOR,
+  AREA_SIGN_TEXT_COLOR,
+} from '../../constants.js';
 import type { AreaDefinition } from '../types.js';
 
 export interface AreaLabelSpot {
@@ -86,4 +93,37 @@ export function signBoardRects(
     board: { x, y, w, h },
     frame: { x: x - border, y: y - border, w: w + border * 2, h: h + border * 2 },
   };
+}
+
+/** The slice of CanvasRenderingContext2D the sign board draws with (kept small so tests need no DOM). */
+export interface SignBoardCtx {
+  globalAlpha: number;
+  fillStyle: string | object;
+  fillRect(x: number, y: number, w: number, h: number): void;
+  fillText(text: string, x: number, y: number): void;
+}
+
+/**
+ * mptl fork (Đ3): one room sign — drop shadow, Area-coloured frame, dark plank,
+ * light text, so the room name reads on any floor colour.
+ */
+export function drawSignBoard(
+  ctx: SignBoardCtx,
+  text: string,
+  rects: { board: PixelRect; frame: PixelRect },
+  frameColor: string,
+  zoom: number,
+): void {
+  const { board, frame } = rects;
+  const shadow = Math.max(1, Math.round(zoom));
+  ctx.globalAlpha = AREA_LABEL_SHADOW_ALPHA;
+  ctx.fillStyle = AREA_LABEL_SHADOW_COLOR;
+  ctx.fillRect(frame.x + shadow, frame.y + shadow, frame.w, frame.h);
+  ctx.globalAlpha = AREA_LABEL_ALPHA;
+  ctx.fillStyle = frameColor;
+  ctx.fillRect(frame.x, frame.y, frame.w, frame.h);
+  ctx.fillStyle = AREA_SIGN_BOARD_COLOR;
+  ctx.fillRect(board.x, board.y, board.w, board.h);
+  ctx.fillStyle = AREA_SIGN_TEXT_COLOR;
+  ctx.fillText(text, board.x + board.w / 2, board.y + board.h / 2);
 }
