@@ -127,12 +127,17 @@ export function ArchiveConfirmModal({
                     </div>
                   )}
                   {insp?.lastPrompt && (
-                    <div className="text-xs text-text-muted" data-testid="archive-confirm-prompt">
+                    <div
+                      className="text-xs text-text-muted line-clamp-2"
+                      data-testid="archive-confirm-prompt"
+                    >
                       Anh hỏi cuối: {insp.lastPrompt}
                     </div>
                   )}
                   {insp?.lastReply && (
-                    <div className="text-xs text-text-muted">Trả lời cuối: {insp.lastReply}</div>
+                    <div className="text-xs text-text-muted line-clamp-2">
+                      Trả lời cuối: {insp.lastReply}
+                    </div>
                   )}
                   {insp && t.provider === 'claude' && (
                     <div className="flex flex-col gap-1" data-testid="archive-confirm-procs">

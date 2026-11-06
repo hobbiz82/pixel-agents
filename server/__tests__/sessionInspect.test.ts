@@ -7,6 +7,7 @@ import {
   parseGitStatus,
   parseLsofPorts,
   parsePsRows,
+  sharedSnapshots,
   verifyStopTargets,
 } from '../src/sessionInspect.js';
 
@@ -296,5 +297,59 @@ describe('verifyStopTargets', () => {
       { sessionPid: 100, rows, launchd },
     );
     expect(ok).toEqual([]);
+  });
+});
+
+describe('sharedSnapshots', () => {
+  it('a burst of inspections runs ps / lsof / launchctl once', async () => {
+    const runs = { ps: 0, listening: 0, established: 0, launchd: 0, git: 0 };
+    let clock = 0;
+    const base = io({
+      ps: async () => {
+        runs.ps++;
+        return '';
+      },
+      listening: async () => {
+        runs.listening++;
+        return '';
+      },
+      established: async () => {
+        runs.established++;
+        return '';
+      },
+      launchdPids: async () => {
+        runs.launchd++;
+        return '';
+      },
+      git: async () => {
+        runs.git++;
+        return '# branch.head main\n';
+      },
+    });
+    const shared = sharedSnapshots(base, 3000, () => clock);
+    await Promise.all([shared.ps(), shared.ps(), shared.listening(), shared.listening()]);
+    await shared.git('/a', []);
+    await shared.git('/b', []);
+    expect(runs).toMatchObject({ ps: 1, listening: 1, git: 2 });
+    clock = 3001;
+    await shared.ps();
+    expect(runs.ps).toBe(2);
+  });
+
+  it('a failed snapshot is not kept', async () => {
+    let n = 0;
+    const shared = sharedSnapshots(
+      io({
+        ps: async () => {
+          n++;
+          if (n === 1) throw new Error('busy');
+          return 'ok';
+        },
+      }),
+      3000,
+      () => 0,
+    );
+    await expect(shared.ps()).rejects.toThrow('busy');
+    expect(await shared.ps()).toBe('ok');
   });
 });

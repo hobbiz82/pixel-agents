@@ -441,6 +441,39 @@ function run(file: string, args: string[], cwd?: string): Promise<string> {
   });
 }
 
+/**
+ * One machine snapshot (ps, lsof, launchctl) shared by a burst of inspections:
+ * opening the confirm for 20 sessions runs each command once, not 20 times.
+ * Per-session reads (git, tail, cwd) are not shared. Failures are not kept.
+ */
+export function sharedSnapshots(
+  io: InspectIO,
+  ttlMs = 3000,
+  now: () => number = Date.now,
+): InspectIO {
+  const memo = <K extends 'ps' | 'listening' | 'established' | 'launchdPids'>(key: K) => {
+    let at = -Infinity;
+    let value: Promise<string> | null = null;
+    return (): Promise<string> => {
+      if (value && now() - at <= ttlMs) return value;
+      at = now();
+      const p = io[key]();
+      value = p;
+      p.catch(() => {
+        if (value === p) value = null;
+      });
+      return p;
+    };
+  };
+  return {
+    ...io,
+    ps: memo('ps'),
+    listening: memo('listening'),
+    established: memo('established'),
+    launchdPids: memo('launchdPids'),
+  };
+}
+
 export function defaultInspectIO(): InspectIO {
   return {
     ps: () => run('ps', ['-axo', 'pid=,ppid=,lstart=,args=']),

@@ -35,7 +35,12 @@ import {
   MAX_STOP,
   restoreSession,
 } from './sessionArchive.js';
-import { defaultInspectIO, type InspectIO, inspectSession } from './sessionInspect.js';
+import {
+  defaultInspectIO,
+  type InspectIO,
+  inspectSession,
+  sharedSnapshots,
+} from './sessionInspect.js';
 import { defaultTrashIO, MAX_TRASH, trashArchived, type TrashIO } from './sessionTrash.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
@@ -536,6 +541,13 @@ function handleArchiveSession(
     });
 }
 
+let defaultInspect: InspectIO | null = null;
+/** One shared snapshot cache for every office connected to this server. */
+function sharedInspectIO(): InspectIO {
+  defaultInspect ??= sharedSnapshots(defaultInspectIO());
+  return defaultInspect;
+}
+
 /** `stop` from the office: well-formed {pid, start} entries only, capped. */
 function parseStopList(raw: unknown): { pid: number; start: string }[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -574,7 +586,7 @@ function handleInspectSession(
   }
   void inspectSession(
     { provider: meta.provider, pid: meta.pid, cwd: meta.cwd, file: agent.jsonlFile, otherCwds },
-    ctx.inspectIO ?? defaultInspectIO(),
+    ctx.inspectIO ?? sharedInspectIO(),
   )
     .then((r) => send({ type: 'sessionInspection', id, ok: true, ...r }))
     .catch((err: unknown) => {
