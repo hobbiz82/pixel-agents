@@ -91,6 +91,14 @@ export function CharacterMenu({
         >
           Lưu trữ…
         </Button>
+        {actions.archive.reason && (
+          <div
+            className="text-xs text-text-muted leading-snug"
+            data-testid="character-menu-archive-reason"
+          >
+            {actions.archive.reason}
+          </div>
+        )}
         <Button
           size="sm"
           variant="disabled"

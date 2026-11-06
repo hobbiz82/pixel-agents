@@ -17,7 +17,7 @@ import type { StorageLike } from './sessionTableStore.js';
 const QUERY_KEY = 'mptl.cardBar.query';
 
 export const CARD_SORTS: { value: SortKey; dir: SortDir; label: string }[] = [
-  { value: 'default', dir: 'asc', label: 'Mặc định' },
+  { value: 'default', dir: 'asc', label: 'Sắp xếp' },
   { value: 'status', dir: 'asc', label: 'Trạng thái' },
   { value: 'idle', dir: 'desc', label: 'Rảnh lâu nhất' },
   { value: 'ram', dir: 'desc', label: 'Tốn RAM nhất' },

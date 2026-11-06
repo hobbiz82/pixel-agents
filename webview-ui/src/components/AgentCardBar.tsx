@@ -166,7 +166,7 @@ export function AgentCardBar({
               className={SELECT_CLASS}
               data-testid="card-bar-tool"
             >
-              <option value="">Mọi công cụ</option>
+              <option value="">Công cụ</option>
               <option value="claude">Claude</option>
               <option value="codex">Codex</option>
             </select>
@@ -183,7 +183,7 @@ export function AgentCardBar({
               className={SELECT_CLASS}
               data-testid="card-bar-status"
             >
-              <option value="">Mọi trạng thái</option>
+              <option value="">Trạng thái</option>
               <option value="waiting">Chờ anh</option>
               <option value="busy">Đang chạy</option>
               <option value="idle">Rảnh</option>
