@@ -145,6 +145,8 @@ export interface AreaDefinition {
   label: string;
   /** Hex color (e.g. "#ff6b6b"). RGB only — alpha applied at render time. */
   color: string;
+  /** mptl fork: name drawn on the room (generated offices); falls back to `label`. */
+  title?: string;
 }
 
 export interface OfficeLayout {
@@ -165,6 +167,9 @@ export interface OfficeLayout {
   areas?: AreaDefinition[];
   /** Per-tile Area label, parallel to tiles array. null = no area assignment. */
   areaTiles?: Array<string | null>;
+  /** mptl fork: built in the browser from the live sessions (one room per
+   *  project). Never saved — the server refuses it and the editor stays off. */
+  generated?: 'projects';
 }
 
 export interface Character {

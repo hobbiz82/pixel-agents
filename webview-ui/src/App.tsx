@@ -29,6 +29,7 @@ import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { useIntroTour } from './hooks/useIntroTour.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { useKeyboardViewport } from './hooks/useKeyboardViewport.js';
+import { browserStorage, useProjectOffice } from './hooks/useProjectOffice.js';
 import { useTerminalDrawer } from './hooks/useTerminalDrawer.js';
 import { MobileShell } from './mobile/MobileShell.js';
 import { useMobileShell } from './mobile/useMobileShell.js';
@@ -41,6 +42,12 @@ import { exportLayoutToFile } from './office/layout/exportLayout.js';
 import { isRotatable } from './office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { overlayProjection } from './office/projection.js';
+import {
+  loadAutoRooms,
+  loadRoomTitles,
+  renameRoom,
+  saveAutoRooms,
+} from './office/projectOfficeStore.js';
 import { type ArchivedSession, type BulkPlan, planBulkArchive } from './office/sessionArchive.js';
 import type { SessionInput, SessionRow } from './office/sessionRows.js';
 import { buildSessionRows } from './office/sessionRows.js';
@@ -133,6 +140,27 @@ function App() {
     terminalUnavailableReason,
     terminalAgentIds,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
+
+  // mptl fork (Đ2): one room per project with live sessions, built in the
+  // browser and never saved; the layout editor is off while it is up.
+  const [autoRooms, setAutoRooms] = useState(() => loadAutoRooms(browserStorage()));
+  const [roomTitles, setRoomTitles] = useState(() => loadRoomTitles(browserStorage()));
+  useProjectOffice({
+    getOfficeState,
+    enabled: autoRooms && !editor.isEditMode,
+    ready: layoutReady,
+    titles: roomTitles,
+    getSavedLayout: editor.getLastSavedLayout,
+  });
+  const toggleAutoRooms = useCallback(() => {
+    setAutoRooms((on) => {
+      saveAutoRooms(browserStorage(), !on);
+      return !on;
+    });
+  }, []);
+  const handleRenameRoom = useCallback((project: string, title: string) => {
+    setRoomTitles((prev) => renameRoom(browserStorage(), prev, project, title));
+  }, []);
 
   // Show migration notice once layout reset is detected
   const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false);
@@ -511,8 +539,14 @@ function App() {
             window.alert('Invalid layout file.');
             return;
           }
+          // mptl fork: an exported project office imports as a normal layout.
+          delete imported.generated;
           const migrated = migrateLayoutColors(imported as unknown as OfficeLayout);
-          getOfficeState().rebuildFromLayout(migrated);
+          // While the rooms per project are on, the import becomes the saved
+          // layout (shown when they are switched off) without replacing them.
+          if (getOfficeState().getLayout().generated !== 'projects') {
+            getOfficeState().rebuildFromLayout(migrated);
+          }
           editor.setLastSavedLayout(migrated);
           transport.send({
             type: 'saveLayout',
@@ -725,6 +759,11 @@ function App() {
         <BottomToolbar
           isEditMode={editor.isEditMode}
           onToggleEditMode={editor.handleToggleEditMode}
+          layoutDisabledReason={
+            autoRooms && !editor.isEditMode
+              ? 'Đang bật "Mỗi project 1 phòng" (Settings) — tắt đi để sửa bố cục.'
+              : null
+          }
           isSettingsOpen={isSettingsOpen}
           onToggleSettings={() => setIsSettingsOpen((v) => !v)}
           directories={directories}
@@ -883,6 +922,8 @@ function App() {
         archived={archivedSessions}
         onRestore={officeReadOnly ? undefined : handleRestore}
         onDeleteArchived={officeReadOnly ? undefined : setDeleteTargets}
+        roomTitles={roomTitles}
+        onRenameRoom={autoRooms ? handleRenameRoom : undefined}
       />
       <DeleteArchivedModal
         sessions={deleteTargets}
@@ -1012,6 +1053,8 @@ function App() {
         }}
         onExportLayout={handleExportLayout}
         onImportLayout={handleImportLayout}
+        autoRooms={autoRooms}
+        onToggleAutoRooms={toggleAutoRooms}
       />
 
       {showMigrationNotice && (

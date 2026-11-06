@@ -57,6 +57,8 @@ interface EditorActions extends Omit<FurnitureColorActions, 'pickColorAt'> {
   panRef: React.MutableRefObject<{ x: number; y: number }>;
   saveTimerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   setLastSavedLayout: (layout: OfficeLayout) => void;
+  /** mptl fork: the layout last loaded from / saved to the server (not a generated office). */
+  getLastSavedLayout: () => OfficeLayout | null;
   /** Clear the dirty flag (used after a browser import applies a new saved baseline). */
   markClean: () => void;
   handleToggleEditMode: () => void;
@@ -131,6 +133,7 @@ export function useEditorActions(
   const setLastSavedLayout = useCallback((layout: OfficeLayout) => {
     lastSavedLayoutRef.current = structuredClone(layout);
   }, []);
+  const getLastSavedLayout = useCallback(() => lastSavedLayoutRef.current, []);
 
   // Clear the dirty flag after a browser layout import: the imported layout is the
   // new saved baseline (already persisted via saveLayout). setIsDirty also forces a
@@ -755,6 +758,7 @@ export function useEditorActions(
     panRef,
     saveTimerRef,
     setLastSavedLayout,
+    getLastSavedLayout,
     markClean,
     handleToggleEditMode,
     handleToolChange,

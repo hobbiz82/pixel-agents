@@ -25,6 +25,7 @@ import {
   layoutToTileMap,
 } from '../layout/layoutSerializer.js';
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
+import { SHARED_ROOM } from '../projectOffice.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
 import type {
@@ -174,7 +175,7 @@ export class OfficeState {
 
     // First pass: try to keep characters at their existing seats
     for (const ch of this.characters.values()) {
-      if (ch.seatId && this.seats.has(ch.seatId)) {
+      if (ch.seatId && this.seats.has(ch.seatId) && this.inWantedRoom(ch, ch.seatId)) {
         const seat = this.seats.get(ch.seatId)!;
         if (!seat.assigned) {
           seat.assigned = true;
@@ -195,7 +196,7 @@ export class OfficeState {
     // Second pass: assign remaining characters to free seats
     for (const ch of this.characters.values()) {
       if (ch.seatId) continue;
-      const seatId = this.findFreeSeat(ch.directoryName);
+      const seatId = this.findFreeSeat(ch.directoryName, ch.sessionMeta?.project);
       if (seatId) {
         this.seats.get(seatId)!.assigned = true;
         ch.seatId = seatId;
@@ -360,6 +361,34 @@ export class OfficeState {
   }
 
   /**
+   * mptl fork: the Area labels a session should sit in.
+   *  - Generated office (one room per project): its project's room, else the
+   *    shared room. Saved Area mappings do not apply — the rooms are the mapping.
+   *  - Hand-made layout: the saved mapping, else an Area named exactly like the
+   *    folder (the bundled office ships rooms named per project).
+   */
+  private wantedAreas(directoryName?: string, project?: string): string[] | undefined {
+    const areas = this.layout.areas ?? [];
+    if (this.layout.generated === 'projects') {
+      const key = project || directoryName;
+      return [key && areas.some((a) => a.label === key) ? key : SHARED_ROOM];
+    }
+    if (!directoryName) return undefined;
+    return (
+      this.areaMappings[directoryName] ??
+      (areas.some((a) => a.label === directoryName) ? [directoryName] : undefined)
+    );
+  }
+
+  /** Generated office only: is this seat in the room the session belongs in?
+   *  Sessions without facts yet (and sub-agents) keep whatever seat they have. */
+  private inWantedRoom(ch: Character, seatId: string): boolean {
+    if (this.layout.generated !== 'projects' || !ch.sessionMeta) return true;
+    const wanted = this.wantedAreas(ch.directoryName, ch.sessionMeta.project);
+    return wanted?.includes(this.seatZone(seatId) ?? '') ?? true;
+  }
+
+  /**
    * 3-stage seat picker for top-level agents.
    *
    *   Stage 1: If `directoryName` is given and `areaMappings[directoryName]` lists
@@ -373,7 +402,7 @@ export class OfficeState {
    * preserves pre-Areas single-stage behavior (skips Stage 1; Stage 2 picks
    * unzoned seats from a layout without `areaTiles`, which is every seat).
    */
-  private findFreeSeat(directoryName?: string): string | null {
+  private findFreeSeat(directoryName?: string, project?: string): string | null {
     const electronicsTiles = this.buildElectronicsTileSet();
     const freeSeats: string[] = [];
     for (const [uid, seat] of this.seats) {
@@ -381,14 +410,7 @@ export class OfficeState {
     }
     if (freeSeats.length === 0) return null;
 
-    // mptl fork: with no saved mapping, an Area named exactly like the folder
-    // counts as its mapping (the bundled office ships rooms named per project).
-    const areaLabels = directoryName
-      ? (this.areaMappings[directoryName] ??
-        ((this.layout.areas ?? []).some((a) => a.label === directoryName)
-          ? [directoryName]
-          : undefined))
-      : undefined;
+    const areaLabels = this.wantedAreas(directoryName, project);
 
     // Stage 1 — in-area seats for the Directory's mapped Area labels.
     if (areaLabels && areaLabels.length > 0) {
@@ -483,8 +505,9 @@ export class OfficeState {
     if (!seatId && anchorAt) {
       seatId = closestFreeSeat(this.seats, anchorAt.col, anchorAt.row);
     }
+    const pendingMeta = this.pendingSessionMeta.get(id);
     if (!seatId) {
-      seatId = this.findFreeSeat(directoryName);
+      seatId = this.findFreeSeat(directoryName, pendingMeta?.project);
     }
 
     let ch: Character;
@@ -514,7 +537,6 @@ export class OfficeState {
     if (!skipSpawnEffect) {
       startMatrixEffect(ch, 'spawn');
     }
-    const pendingMeta = this.pendingSessionMeta.get(id);
     if (pendingMeta) {
       ch.sessionMeta = pendingMeta;
       this.pendingSessionMeta.delete(id);
@@ -1145,6 +1167,25 @@ export class OfficeState {
       return;
     }
     ch.sessionMeta = meta;
+    // Generated office: a session seated before its project was known moves
+    // to its project's room once there is a free seat there.
+    if (ch.seatId && !this.inWantedRoom(ch, ch.seatId)) {
+      const old = this.seats.get(ch.seatId);
+      const next = this.findFreeSeat(ch.directoryName, meta.project);
+      if (old && next && this.inWantedRoom(ch, next)) {
+        old.assigned = false;
+        const seat = this.seats.get(next)!;
+        seat.assigned = true;
+        ch.seatId = next;
+        ch.tileCol = seat.seatCol;
+        ch.tileRow = seat.seatRow;
+        ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+        ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+        ch.dir = seat.facingDir;
+        ch.path = [];
+        ch.moveProgress = 0;
+      }
+    }
   }
 
   update(dt: number): void {

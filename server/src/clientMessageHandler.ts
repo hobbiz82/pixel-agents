@@ -222,7 +222,9 @@ export function handleClientMessage(
       break;
 
     case 'saveLayout':
-      if (msg.layout) {
+      // mptl fork: the one-room-per-project office is rebuilt in the browser
+      // from the live sessions; saving it would overwrite anh's own layout.
+      if (msg.layout && (msg.layout as Record<string, unknown>).generated === undefined) {
         writeLayoutToFile(msg.layout as Record<string, unknown>);
       }
       break;

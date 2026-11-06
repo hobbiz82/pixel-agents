@@ -42,6 +42,9 @@ interface SettingsModalProps {
   onExportLayout: () => void;
   /** Browser-native layout import from a chosen file (standalone only). */
   onImportLayout: (file: File) => void;
+  /** mptl fork: one room per project with live sessions (built, never saved). */
+  autoRooms?: boolean;
+  onToggleAutoRooms?: () => void;
 }
 
 export function SettingsModal({
@@ -67,6 +70,8 @@ export function SettingsModal({
   onToggleShowHostDirectories,
   onExportLayout,
   onImportLayout,
+  autoRooms,
+  onToggleAutoRooms,
 }: SettingsModalProps) {
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -211,6 +216,13 @@ export function SettingsModal({
           label="Display Headless as Ghosts"
           checked={ghostHeadlessAgents}
           onChange={onToggleGhostHeadlessAgents}
+        />
+      )}
+      {onToggleAutoRooms && (
+        <Checkbox
+          label="Mỗi project 1 phòng"
+          checked={autoRooms ?? false}
+          onChange={onToggleAutoRooms}
         />
       )}
       {showAreasAvailable && (
