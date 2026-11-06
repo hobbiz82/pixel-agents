@@ -5,6 +5,7 @@ import { AgentCardBar } from './components/AgentCardBar.js';
 import { ArchiveConfirmModal, type ArchiveTarget } from './components/ArchiveConfirmModal.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
+import { CharacterMenu } from './components/CharacterMenu.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
 import { DeleteArchivedModal } from './components/DeleteArchivedModal.js';
@@ -484,6 +485,25 @@ function App() {
     getOfficeState().selectAndFollow(agentId);
   }, []);
 
+  // mptl fork (Đ2.1): right-click on a character opens its menu and brings its
+  // card into view in the right-hand bar.
+  // The row is read when the menu opens (the menu is a snapshot; the archive
+  // confirm re-reads the session before anything happens).
+  const [characterMenu, setCharacterMenu] = useState<{
+    id: number;
+    x: number;
+    y: number;
+    row: SessionRow | undefined;
+  } | null>(null);
+  const handleCharacterMenu = useCallback(
+    (id: number, x: number, y: number) => {
+      setCharacterMenu({ id, x, y, row: sessionInfoFor(id, Date.now()) });
+    },
+    [sessionInfoFor],
+  );
+  const closeCharacterMenu = useCallback(() => setCharacterMenu(null), []);
+  const characterMenuRow = characterMenu?.row;
+
   const officeState = getOfficeState();
 
   // Merged set of Directories the Areas dropdown can map: host-contributed ones plus
@@ -615,6 +635,7 @@ function App() {
         showAreas={effectiveShowAreas}
         activeAreaLabel={activeAreaLabel}
         tapSelectsFirst={isMobile}
+        onCharacterMenu={isMobile ? undefined : handleCharacterMenu}
       />
 
       {!isDebugMode ? (
@@ -902,6 +923,7 @@ function App() {
                 onClose={handleCloseAgent}
                 infoFor={sessionInfoFor}
                 onArchive={officeReadOnly ? undefined : requestArchive}
+                highlightId={characterMenu?.id ?? null}
               />
             )
           )}
@@ -936,6 +958,17 @@ function App() {
           setDeleteTargets(null);
         }}
       />
+      {characterMenu && characterMenuRow && (
+        <CharacterMenu
+          row={characterMenuRow}
+          x={characterMenu.x}
+          y={characterMenu.y}
+          readOnly={officeReadOnly}
+          onArchive={requestArchive}
+          onOpenSessions={() => setIsSessionsOpen(true)}
+          onClose={closeCharacterMenu}
+        />
+      )}
       <ArchiveConfirmModal
         plan={archivePlan}
         inspections={inspections}

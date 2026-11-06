@@ -30,6 +30,8 @@ const CARD_VARIANT: Record<CardVariant, string> = {
 };
 
 interface AgentCardProps {
+  /** mptl fork (Đ2.1): the character anh right-clicked — bright border. */
+  highlighted?: boolean;
   agentId: number;
   variant: CardVariant;
   appearance: AgentAppearance;
@@ -84,13 +86,16 @@ export function AgentCard({
   info,
   onArchive,
   archiveBlock = null,
+  highlighted = false,
 }: AgentCardProps) {
   return (
     <div
-      className={`pointer-events-auto flex items-stretch gap-1 p-1 cursor-pointer border-2 shrink-0 ${CARD_VARIANT[variant]}`}
+      className={`pointer-events-auto flex items-stretch gap-1 p-1 cursor-pointer border-2 shrink-0 ${highlighted ? 'bg-active-bg border-accent-bright' : CARD_VARIANT[variant]}`}
       onClick={() => onSelect(agentId)}
       title={cardTitle(agentId, info)}
       data-testid="agent-card"
+      data-agent-id={agentId}
+      data-highlighted={highlighted || undefined}
     >
       <CharacterMugShot palette={appearance.palette} hueShift={appearance.hueShift} />
       {info && (

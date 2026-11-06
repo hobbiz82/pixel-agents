@@ -24,6 +24,7 @@ import type {
 } from '../engine/renderer.js';
 import { renderFrame } from '../engine/renderer.js';
 import { EditTool, TILE_SIZE } from '../types.js';
+import { DragPan, wheelIntent } from '../viewportInput.js';
 import { computeNormalModeCursor } from './officeCanvasCursor.js';
 import { useCanvasTouchGestures } from './useCanvasTouchGestures.js';
 
@@ -63,6 +64,8 @@ interface OfficeCanvasProps {
    *  character fires onClick (opens its terminal). Desktop keeps single-click
    *  focus with tap-again-to-deselect. */
   tapSelectsFirst?: boolean;
+  /** mptl fork (Đ2.1): right-click on a character opens its menu. */
+  onCharacterMenu?: (agentId: number, clientX: number, clientY: number) => void;
 }
 
 export function OfficeCanvas({
@@ -83,6 +86,7 @@ export function OfficeCanvas({
   showAreas,
   activeAreaLabel,
   tapSelectsFirst = false,
+  onCharacterMenu,
 }: OfficeCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -97,6 +101,12 @@ export function OfficeCanvas({
   const isEraseDraggingRef = useRef(false);
   // Zoom scroll accumulator for trackpad pinch sensitivity
   const zoomAccumulatorRef = useRef(0);
+  // mptl fork (Đ2.1): left-drag moves the view outside the editor; a drag
+  // swallows the click that follows so it doesn't select a character.
+  const dragPanRef = useRef(new DragPan());
+  const suppressClickRef = useRef(false);
+  // Ctrl really held (a trackpad pinch also sets wheel ctrlKey, without it).
+  const ctrlHeldRef = useRef(false);
   // Clamp pan so the map edge can't go past a margin inside the viewport
   const clampPan = useCallback(
     (px: number, py: number): { x: number; y: number } => {
@@ -306,6 +316,20 @@ export function OfficeCanvas({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      if (!isEditMode && (e.buttons & 1) === 1) {
+        const d = dragPanRef.current.move(e.clientX, e.clientY);
+        if (d) {
+          const dpr = window.devicePixelRatio || 1;
+          officeState.breakCameraFollow();
+          panRef.current = clampPan(
+            panStartRef.current.panX + d.dx * dpr,
+            panStartRef.current.panY + d.dy * dpr,
+          );
+          const canvas = canvasRef.current;
+          if (canvas) canvas.style.cursor = 'grabbing';
+          return;
+        }
+      }
       // Handle middle-mouse panning
       if (isPanningRef.current) {
         const dpr = window.devicePixelRatio || 1;
@@ -489,7 +513,18 @@ export function OfficeCanvas({
         return;
       }
 
-      if (!isEditMode) return;
+      if (!isEditMode) {
+        if (e.button === 0) {
+          dragPanRef.current.start(e.clientX, e.clientY);
+          panStartRef.current = {
+            mouseX: e.clientX,
+            mouseY: e.clientY,
+            panX: panRef.current.x,
+            panY: panRef.current.y,
+          };
+        }
+        return;
+      }
 
       // Check rotate/delete button hit first
       const pos = screenToWorld(e.clientX, e.clientY);
@@ -565,6 +600,15 @@ export function OfficeCanvas({
         // Close the in-progress stroke so the next stroke starts a fresh undo
         // entry instead of bundling into this one.
         editorState.endStroke();
+        return;
+      }
+
+      if (!isEditMode && e.button === 0) {
+        if (dragPanRef.current.end()) {
+          suppressClickRef.current = true;
+          const canvas = canvasRef.current;
+          if (canvas) canvas.style.cursor = 'default';
+        }
         return;
       }
 
@@ -691,6 +735,10 @@ export function OfficeCanvas({
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (isEditMode) return; // handled by mouseDown/mouseUp
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
       performTap(e.clientX, e.clientY);
     },
     [isEditMode, performTap],
@@ -698,6 +746,8 @@ export function OfficeCanvas({
 
   const handleMouseLeave = useCallback(() => {
     isPanningRef.current = false;
+    dragPanRef.current.end();
+    suppressClickRef.current = false;
     isEraseDraggingRef.current = false;
     editorState.isDragging = false;
     editorState.endStroke();
@@ -740,6 +790,14 @@ export function OfficeCanvas({
     (e: React.MouseEvent) => {
       e.preventDefault();
       if (isEditMode) return;
+      if (onCharacterMenu) {
+        const pos = screenToWorld(e.clientX, e.clientY);
+        const hitId = pos ? officeState.getCharacterAt(pos.worldX, pos.worldY) : null;
+        if (hitId !== null) {
+          onCharacterMenu(hitId, e.clientX, e.clientY);
+          return;
+        }
+      }
       // Right-click to walk selected agent to tile
       if (officeState.selectedAgentId !== null) {
         const tile = screenToTile(e.clientX, e.clientY);
@@ -748,16 +806,35 @@ export function OfficeCanvas({
         }
       }
     },
-    [isEditMode, officeState, screenToTile],
+    [isEditMode, officeState, screenToTile, screenToWorld, onCharacterMenu],
   );
 
-  // Wheel: Ctrl+wheel to zoom, plain wheel/trackpad to pan
+  useEffect(() => {
+    const sync = (e: KeyboardEvent) => {
+      ctrlHeldRef.current = e.ctrlKey;
+    };
+    const clear = () => {
+      ctrlHeldRef.current = false;
+    };
+    window.addEventListener('keydown', sync);
+    window.addEventListener('keyup', sync);
+    window.addEventListener('blur', clear);
+    return () => {
+      window.removeEventListener('keydown', sync);
+      window.removeEventListener('keyup', sync);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
+
+  // mptl fork (Đ2.1): wheel = zoom, Shift+wheel = up/down, Ctrl+wheel =
+  // left/right (viewportInput.ts); a trackpad pinch still zooms.
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       e.preventDefault();
-      if (e.ctrlKey || e.metaKey) {
+      const intent = wheelIntent(e, ctrlHeldRef.current);
+      if (intent.kind === 'zoom') {
         // Accumulate scroll delta, step zoom when threshold crossed
-        zoomAccumulatorRef.current += e.deltaY;
+        zoomAccumulatorRef.current += intent.amount;
         if (Math.abs(zoomAccumulatorRef.current) >= ZOOM_SCROLL_THRESHOLD) {
           const delta = zoomAccumulatorRef.current < 0 ? 1 : -1;
           zoomAccumulatorRef.current = 0;
@@ -767,12 +844,11 @@ export function OfficeCanvas({
           }
         }
       } else {
-        // Pan via trackpad two-finger scroll or mouse wheel
         const dpr = window.devicePixelRatio || 1;
         officeState.breakCameraFollow();
         panRef.current = clampPan(
-          panRef.current.x - e.deltaX * dpr,
-          panRef.current.y - e.deltaY * dpr,
+          panRef.current.x - intent.dx * dpr,
+          panRef.current.y - intent.dy * dpr,
         );
       }
     },

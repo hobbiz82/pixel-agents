@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   CARD_BAR_EXPANDED_STORAGE_KEY,
@@ -6,7 +6,16 @@ import {
   TERMINAL_SIDEBAR_WIDTH_PX,
 } from '../constants.js';
 import { useNow } from '../hooks/useNow.js';
+import { browserStorage } from '../hooks/useProjectOffice.js';
+import {
+  CARD_SORTS,
+  cardQueryActive,
+  loadCardQuery,
+  saveCardQuery,
+  visibleCardIds,
+} from '../office/cardBarQuery.js';
 import type { SessionRow } from '../office/sessionRows.js';
+import { DEFAULT_QUERY, type TableQuery } from '../office/sessionTable.js';
 import type { AgentAppearance, TabStatus } from './AgentCard.js';
 import { AgentCard } from './AgentCard.js';
 import { cardVariant } from './cardBar.js';
@@ -30,7 +39,12 @@ interface AgentCardBarProps {
   infoFor?: (agentId: number, now: number) => SessionRow | undefined;
   /** mptl fork: Lưu trữ on each card; absent in a read-only office. */
   onArchive?: (agentId: number) => void;
+  /** mptl fork (Đ2.1): the character anh right-clicked — scrolled into view,
+   *  bright border, kept visible whatever the filter. */
+  highlightId?: number | null;
 }
+
+const SELECT_CLASS = 'min-w-0 px-2 py-1 bg-btn-bg border-2 border-border text-text text-xs';
 
 /** Saved expand choice; defaults to expanded. Storage may be blocked. */
 function readExpanded(): boolean {
@@ -74,17 +88,40 @@ export function AgentCardBar({
   onClose,
   infoFor,
   onArchive,
+  highlightId = null,
 }: AgentCardBarProps) {
   const [expanded, setExpanded] = useState(readExpanded);
   const showInfo = infoFor !== undefined && expanded;
   const now = useNow(showInfo);
+  const [query, setQueryState] = useState<TableQuery>(() => loadCardQuery(browserStorage()));
+  const setQuery = (patch: Partial<TableQuery>) => {
+    const next = { ...query, ...patch };
+    setQueryState(next);
+    saveCardQuery(browserStorage(), next);
+  };
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (highlightId === null) return;
+    barRef.current
+      ?.querySelector(`[data-agent-id="${highlightId}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [highlightId]);
 
   if (agentIds.length === 0) return null;
+
+  // The query only applies while names show; the collapsed bar lists everyone.
+  const shownIds =
+    showInfo && infoFor
+      ? visibleCardIds(agentIds, (id) => infoFor(id, now), query, highlightId)
+      : agentIds;
+  const sortValue = CARD_SORTS.findIndex((o) => o.value === query.sort);
 
   const width = showInfo ? CARD_BAR_EXPANDED_WIDTH_PX : TERMINAL_SIDEBAR_WIDTH_PX;
 
   return (
     <div
+      ref={barRef}
       className={`relative z-30 h-full shrink-0 flex flex-col gap-4 pt-4 overflow-y-auto pointer-events-none ${showInfo ? 'items-stretch px-4' : 'items-center'}`}
       style={{ width, marginLeft: -width }}
     >
@@ -103,9 +140,95 @@ export function AgentCardBar({
           {expanded ? '»' : '«'}
         </Button>
       )}
-      {agentIds.map((agentId) => (
+      {showInfo && (
+        <div
+          className="pointer-events-auto shrink-0 flex flex-col gap-2 p-2 bg-bg border-2 border-border"
+          data-testid="card-bar-query"
+        >
+          <input
+            type="search"
+            value={query.search}
+            onChange={(e) => setQuery({ search: e.target.value })}
+            placeholder="Tìm tên, project…"
+            aria-label="Tìm phiên"
+            className="px-2 py-1 bg-btn-bg border-2 border-border text-text text-xs"
+            data-testid="card-bar-search"
+          />
+          <div className="grid grid-cols-3 gap-2">
+            <select
+              value={query.providers[0] ?? ''}
+              onChange={(e) =>
+                setQuery({
+                  providers: e.target.value ? [e.target.value as 'claude' | 'codex'] : [],
+                })
+              }
+              aria-label="Công cụ"
+              className={SELECT_CLASS}
+              data-testid="card-bar-tool"
+            >
+              <option value="">Mọi công cụ</option>
+              <option value="claude">Claude</option>
+              <option value="codex">Codex</option>
+            </select>
+            <select
+              value={query.statuses[0] ?? ''}
+              onChange={(e) =>
+                setQuery({
+                  statuses: e.target.value
+                    ? [e.target.value as TableQuery['statuses'][number]]
+                    : [],
+                })
+              }
+              aria-label="Trạng thái"
+              className={SELECT_CLASS}
+              data-testid="card-bar-status"
+            >
+              <option value="">Mọi trạng thái</option>
+              <option value="waiting">Chờ anh</option>
+              <option value="busy">Đang chạy</option>
+              <option value="idle">Rảnh</option>
+            </select>
+            <select
+              value={sortValue < 0 ? 0 : sortValue}
+              onChange={(e) => {
+                const o = CARD_SORTS[Number(e.target.value)];
+                setQuery({ sort: o.value, dir: o.dir });
+              }}
+              aria-label="Sắp xếp"
+              className={SELECT_CLASS}
+              data-testid="card-bar-sort"
+            >
+              {CARD_SORTS.map((o, i) => (
+                <option key={o.value} value={i}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {cardQueryActive(query) && (
+            <div className="flex items-center justify-between text-xs text-text-muted">
+              <span data-testid="card-bar-count">
+                {shownIds.length}/{agentIds.length} phiên
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setQueryState(DEFAULT_QUERY);
+                  saveCardQuery(browserStorage(), DEFAULT_QUERY);
+                }}
+                data-testid="card-bar-clear"
+              >
+                Bỏ lọc
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {shownIds.map((agentId) => (
         <AgentCard
           key={agentId}
+          highlighted={agentId === highlightId}
           agentId={agentId}
           variant={cardVariant(agentId, { activeId: activeAgentId, focusedId: focusedAgentId })}
           appearance={getAppearance(agentId)}
