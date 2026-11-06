@@ -59,12 +59,12 @@ export function PermissionCards({ prompts, nameFor, onDecide }: PermissionCardsP
               {p.cwd && <span className="text-text-muted"> · {p.cwd}</span>}
             </div>
             {p.summary && (
-              <pre
-                className="m-0 p-3 bg-bg-dark border border-border text-xs whitespace-pre-wrap break-all max-h-[120px] overflow-y-auto"
+              <div
+                className="p-3 bg-bg-dark border border-border text-xs whitespace-pre-wrap break-all max-h-[120px] overflow-y-auto"
                 data-testid="permission-summary"
               >
                 {p.summary}
-              </pre>
+              </div>
             )}
             <div className="flex gap-4 flex-wrap">
               <Button
