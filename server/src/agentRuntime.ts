@@ -21,6 +21,7 @@ import {
   ensureProjectScan,
   forgetUserClosed,
   isTrackedProjectDir,
+  markDeadTranscript,
   reassignAgentToFile,
   scanForBackgroundAgentFiles,
   scanForTeammateFiles,
@@ -401,6 +402,7 @@ export class AgentRuntime {
     this.subagentWatch.removeByLead(id);
     this.unregisterAgent(agent.sessionId);
     this.knownJsonlFiles.delete(agent.jsonlFile);
+    markDeadTranscript(agent.jsonlFile);
     this.removeAgent(id);
   }
 

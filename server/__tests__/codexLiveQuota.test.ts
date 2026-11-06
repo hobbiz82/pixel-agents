@@ -155,3 +155,16 @@ describe('dropExpired keeps where the reading came from', () => {
     expect(dropExpired(q, NOW)?.source).toBe('live');
   });
 });
+
+describe('appServerCommand', () => {
+  it('uses the same codex binary lookup as Lưu trữ: launchd has no PATH (06/11: live read fell back to rollouts)', async () => {
+    const { appServerCommand } = await import('../src/quota.js');
+    expect(appServerCommand({}, '/Users/x', (p) => p === '/Users/x/.local/bin/codex')).toEqual([
+      '/Users/x/.local/bin/codex',
+      ['app-server'],
+    ]);
+    expect(appServerCommand({ PIXEL_AGENTS_CODEX_BIN: '/opt/c' }, '/Users/x', () => false)[0]).toBe(
+      '/opt/c',
+    );
+  });
+});

@@ -1186,6 +1186,21 @@ export function setLiveSessionSource(source: (() => LiveSession[]) | null): void
 /** Live transcripts the user closed with X: never brought back while the session runs. */
 const userClosedLive = new Set<string>();
 
+/**
+ * mptl fork: transcripts of Claude sessions whose process is gone. The transcript
+ * scans adopt any file written in the last minutes, which would bring the character
+ * straight back; they skip these until the session is live again.
+ */
+const deadTranscripts = new Set<string>();
+
+export function markDeadTranscript(file: string): void {
+  deadTranscripts.add(path.resolve(file));
+}
+
+export function isDeadTranscript(file: string): boolean {
+  return deadTranscripts.has(path.resolve(file));
+}
+
 /** mptl fork: a session restored from the archive may get its character back. */
 export function forgetUserClosed(file: string): void {
   userClosedLive.delete(file);
@@ -1208,6 +1223,7 @@ export function adoptLiveSessions(
   persistAgents: () => void,
 ): void {
   for (const { file, cwd, provider, ...rest } of live) {
+    deadTranscripts.delete(path.resolve(file));
     if (!fs.existsSync(file)) continue;
     // A session that changed cwd (e.g. entered a worktree) keeps its id but writes
     // a new transcript; a character still on the old file is a stale duplicate.
@@ -1408,6 +1424,7 @@ export function scanExternalDir(
 
     // Skip files already known (seeded or adopted).
     if (knownJsonlFiles.has(file)) continue;
+    if (isDeadTranscript(file)) continue;
 
     // Skip files permanently dismissed by /clear (never re-adopted)
     if (dismissalTracker!.isPermanentlyDismissed(file)) continue;
@@ -1508,7 +1525,7 @@ function directoryNameFromProjectDir(dirName: string): string {
 
 /** Scan every session root the active provider exposes for active sessions
  *  (global discovery — powers the "Watch All Sessions" toggle). */
-function scanGlobalProjectDirs(
+export function scanGlobalProjectDirs(
   knownJsonlFiles: Set<string>,
   nextAgentIdRef: { current: number },
   agents: AgentStateStore,
@@ -1551,6 +1568,7 @@ function scanGlobalProjectDirs(
 
     for (const file of files) {
       if (knownJsonlFiles.has(file)) continue;
+      if (isDeadTranscript(file)) continue;
       let tracked = false;
       for (const agent of agents.values()) {
         if (pathsMatch(agent.jsonlFile, file)) {

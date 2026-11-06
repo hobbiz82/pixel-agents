@@ -20,6 +20,7 @@ import * as path from 'node:path';
 
 import { codexDefaultRoot, codexRolloutId } from './codexSessions.js';
 import { LAYOUT_FILE_DIR } from './constants.js';
+import { codexBinary } from './sessionArchive.js';
 
 export interface QuotaWindow {
   /** 0–100 (Claude may exceed 100 behind a gateway). */
@@ -265,10 +266,19 @@ export interface AppServerChild {
   kill: () => unknown;
 }
 
-const spawnAppServer = (): AppServerChild =>
-  nodeSpawn('codex', ['app-server'], {
-    stdio: ['pipe', 'pipe', 'ignore'],
-  }) as unknown as AppServerChild;
+/** launchd has no PATH: find codex the way Lưu trữ does (sessionArchive.codexBinary). */
+export function appServerCommand(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+  exists?: (p: string) => boolean,
+): [string, string[]] {
+  return [codexBinary(env, home, exists), ['app-server']];
+}
+
+const spawnAppServer = (): AppServerChild => {
+  const [bin, args] = appServerCommand();
+  return nodeSpawn(bin, args, { stdio: ['pipe', 'pipe', 'ignore'] }) as unknown as AppServerChild;
+};
 
 /**
  * One read-only JSON-RPC exchange with a fresh `codex app-server`: initialize,
