@@ -7,6 +7,7 @@ import {
   fetchCodexRateLimits,
   makeCodexQuotaReader,
   type ProviderQuota,
+  stopCodexAppServers,
 } from '../src/quota.js';
 
 /**
@@ -102,6 +103,15 @@ describe('fetchCodexRateLimits', () => {
     const silent = fakeAppServer(() => undefined);
     await expect(fetchCodexRateLimits(silent.spawn, 50)).rejects.toThrow();
     expect(silent.wasKilled()).toBe(true);
+  });
+
+  it('stops a server still waiting for an answer when the page shuts down', async () => {
+    // 06/11: the page stopped, a real `codex app-server` kept running and writing ~/.codex.
+    const silent = fakeAppServer(() => undefined);
+    const pending = fetchCodexRateLimits(silent.spawn, 60_000);
+    stopCodexAppServers();
+    expect(silent.wasKilled()).toBe(true);
+    await expect(pending).rejects.toThrow();
   });
 });
 

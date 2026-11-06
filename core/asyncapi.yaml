@@ -498,6 +498,15 @@ components:
       type: string
       enum: [claude, codex]
 
+    SessionOrigin:
+      description: |
+        mptl fork. Where anh finds a Claude session: the Claude app (app), a
+        Terminal window (terminal), claude.ai/code over Remote Control
+        (remote), or a program driving the SDK (sdk). From the entrypoint and
+        bridgeSessionId in ~/.claude/sessions/<pid>.json.
+      type: string
+      enum: [app, terminal, remote, sdk]
+
     AgentActivityStatus:
       description: Activity state of an agent.
       type: string
@@ -710,6 +719,8 @@ components:
           type: integer
         project:
           type: string
+        origin:
+          $ref: '#/components/schemas/SessionOrigin'
 
     ArchivedSessions:
       description: |

@@ -8,6 +8,8 @@ import {
   AREA_LABEL_SHADOW_ALPHA,
   AREA_LABEL_SHADOW_COLOR,
   AREA_OVERLAY_ALPHA,
+  AREA_SIGN_BOARD_COLOR,
+  AREA_SIGN_TEXT_COLOR,
   BUBBLE_FADE_DURATION_SEC,
   BUTTON_ICON_COLOR,
   BUTTON_ICON_SIZE_FACTOR,
@@ -64,7 +66,7 @@ import type {
 } from '../types.js';
 import { CharacterState, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
-import { areaLabelSpots } from './areaLabels.js';
+import { areaLabelSpots, signBoardRects } from './areaLabels.js';
 import { getCharacterSprite } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 import { getPetSpriteData } from './petEntity.js';
@@ -261,15 +263,26 @@ export function renderAreaLabels(
     const cx = offsetX + spot.col * s;
     const cy = offsetY + spot.row * s;
 
-    // Pixel-art drop shadow (1px right + down, no blur).
+    // mptl fork (Đ3): sign board — drop shadow, Area-coloured frame, dark
+    // plank, light text, so the room name reads on any floor colour.
+    const { board, frame } = signBoardRects(
+      cx,
+      cy,
+      ctx.measureText(spot.text).width,
+      fontSize,
+      zoom,
+    );
+    const shadow = Math.max(1, Math.round(zoom));
     ctx.globalAlpha = AREA_LABEL_SHADOW_ALPHA;
     ctx.fillStyle = AREA_LABEL_SHADOW_COLOR;
-    ctx.fillText(spot.text, cx + 1, cy + 1);
-
-    // Main label — area's own color, falling back to white if missing.
+    ctx.fillRect(frame.x + shadow, frame.y + shadow, frame.w, frame.h);
     ctx.globalAlpha = AREA_LABEL_ALPHA;
     ctx.fillStyle = colorMap.get(spot.label) ?? AREA_LABEL_FALLBACK_COLOR;
-    ctx.fillText(spot.text, cx, cy);
+    ctx.fillRect(frame.x, frame.y, frame.w, frame.h);
+    ctx.fillStyle = AREA_SIGN_BOARD_COLOR;
+    ctx.fillRect(board.x, board.y, board.w, board.h);
+    ctx.fillStyle = AREA_SIGN_TEXT_COLOR;
+    ctx.fillText(spot.text, board.x + board.w / 2, board.y + board.h / 2);
   }
   ctx.restore();
 }

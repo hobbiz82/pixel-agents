@@ -141,4 +141,8 @@ export interface SessionMeta {
   project?: string;
   /** mptl fork, server only (never sent): the folder the session runs in. */
   cwd?: string;
+  /** mptl fork: where anh can find the session (Claude only). */
+  origin?: SessionOrigin;
 }
+
+export type SessionOrigin = 'app' | 'terminal' | 'remote' | 'sdk';

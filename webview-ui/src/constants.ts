@@ -149,6 +149,9 @@ export const AREA_LABEL_FALLBACK_COLOR = '#ffffff';
 export const AREA_LABEL_SHADOW_COLOR = '#000000';
 /** Drop-shadow alpha behind area labels. */
 export const AREA_LABEL_SHADOW_ALPHA = 0.6;
+/** mptl fork (Đ3): sign board behind room names — dark plank + light text (contrast 13:1). */
+export const AREA_SIGN_BOARD_COLOR = '#2b1d12';
+export const AREA_SIGN_TEXT_COLOR = '#f5e6c8';
 
 // ── VisualColorPicker (HSV wheel + brightness for carpets) ───
 export const VISUAL_COLOR_PICKER_SV_SIZE_PX = 180;

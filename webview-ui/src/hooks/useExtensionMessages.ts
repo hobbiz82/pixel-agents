@@ -981,7 +981,7 @@ export function useExtensionMessages(
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
       } else if (msg.type === 'agentSessionMeta') {
-        // mptl fork: tool (Claude/Codex), session name, RAM, status
+        // mptl fork: tool (Claude/Codex), session name, RAM, status, where the session lives
         os.setAgentSessionMeta(msg.id as number, {
           provider: msg.provider as 'claude' | 'codex' | undefined,
           pid: msg.pid as number | undefined,
@@ -990,6 +990,7 @@ export function useExtensionMessages(
           status: msg.status as string | undefined,
           statusSince: msg.statusSince as number | undefined,
           project: msg.project as string | undefined,
+          origin: msg.origin as 'app' | 'terminal' | 'remote' | 'sdk' | undefined,
         });
       }
     };

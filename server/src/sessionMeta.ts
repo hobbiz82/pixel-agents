@@ -19,7 +19,7 @@ import { type CodexSession, readCodexSessions } from './codexSessions.js';
 import type { LiveSession } from './fileWatcher.js';
 import { defaultArchiveIO, foldArchiveLog } from './sessionArchive.js';
 import { projectOfCwd } from './sessionProject.js';
-import type { SessionMeta } from './types.js';
+import type { SessionMeta, SessionOrigin } from './types.js';
 
 export interface SessionRecord {
   pid: number;
@@ -28,6 +28,20 @@ export interface SessionRecord {
   cwd?: string;
   status?: string;
   statusUpdatedAt?: number;
+  origin?: SessionOrigin;
+}
+
+/**
+ * Where anh can find a Claude session: the Claude app, a Terminal window, claude.ai/code
+ * (Remote Control) or another program (SDK). From `entrypoint` + `bridgeSessionId` in
+ * ~/.claude/sessions/<pid>.json (measured 06/11: claude-desktop · cli · sdk-cli).
+ */
+export function originOf(entrypoint: unknown, bridgeSessionId: unknown): SessionOrigin | undefined {
+  if (entrypoint === 'claude-desktop') return 'app';
+  if (typeof bridgeSessionId === 'string' && bridgeSessionId) return 'remote';
+  if (entrypoint === 'cli') return 'terminal';
+  if (entrypoint === 'sdk-cli') return 'sdk';
+  return undefined;
 }
 
 /** RAM changes smaller than this fraction are not worth a re-send. */
@@ -43,6 +57,8 @@ export function parseSessionRecord(raw: unknown): SessionRecord | null {
   if (typeof r.cwd === 'string') rec.cwd = r.cwd;
   if (typeof r.status === 'string') rec.status = r.status;
   if (typeof r.statusUpdatedAt === 'number') rec.statusUpdatedAt = r.statusUpdatedAt;
+  const origin = originOf(r.entrypoint, r.bridgeSessionId);
+  if (origin) rec.origin = origin;
   return rec;
 }
 
@@ -105,6 +121,7 @@ export function buildSessionMetas(
     const project = projectOfCwd(rec.cwd);
     if (project) meta.project = project;
     if (rec.cwd) meta.cwd = rec.cwd;
+    if (rec.origin) meta.origin = rec.origin;
     metas.set(sessionId, meta);
   }
   return metas;
@@ -134,7 +151,7 @@ export function codexMeta(s: CodexSession): SessionMeta {
 export function sameMeta(a: SessionMeta | undefined, b: SessionMeta): boolean {
   if (!a) return false;
   if (a.provider !== b.provider || a.pid !== b.pid || a.name !== b.name) return false;
-  if (a.project !== b.project || a.cwd !== b.cwd) return false;
+  if (a.project !== b.project || a.cwd !== b.cwd || a.origin !== b.origin) return false;
   if (a.status !== b.status || a.statusSince !== b.statusSince) return false;
   if (a.rssBytes === undefined || b.rssBytes === undefined) return a.rssBytes === b.rssBytes;
   const base = Math.max(a.rssBytes, 1);

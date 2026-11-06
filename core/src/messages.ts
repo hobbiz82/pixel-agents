@@ -229,9 +229,12 @@ export interface AgentSessionMeta {
   status?: string;
   statusSince?: number;
   project?: string;
+  origin?: SessionOrigin;
 }
 
 export type SessionProvider = 'claude' | 'codex';
+
+export type SessionOrigin = 'app' | 'terminal' | 'remote' | 'sdk';
 
 export interface ArchivedSessions {
   type: 'archivedSessions';

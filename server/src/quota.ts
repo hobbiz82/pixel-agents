@@ -284,6 +284,14 @@ const spawnAppServer = (): AppServerChild => {
  * One read-only JSON-RPC exchange with a fresh `codex app-server`: initialize,
  * initialized, account/rateLimits/read. Nothing else is ever sent.
  */
+/** Servers still waiting for an answer; the page kills them when it stops. */
+const inFlight = new Set<() => void>();
+
+/** Stops every `codex app-server` a quota read started and is still waiting on. */
+export function stopCodexAppServers(): void {
+  for (const stop of [...inFlight]) stop();
+}
+
 export function fetchCodexRateLimits(
   spawn: () => AppServerChild = spawnAppServer,
   timeoutMs = 20_000,
@@ -301,6 +309,7 @@ export function fetchCodexRateLimits(
     const finish = (err: unknown, value?: unknown) => {
       if (done) return;
       done = true;
+      inFlight.delete(abort);
       clearTimeout(timer);
       try {
         child.kill();
@@ -310,6 +319,8 @@ export function fetchCodexRateLimits(
       if (err) reject(err);
       else resolve(value);
     };
+    const abort = () => finish(new Error('codex app-server stopped'));
+    inFlight.add(abort);
     const timer = setTimeout(() => finish(new Error('codex app-server timeout')), timeoutMs);
     const send = (m: Record<string, unknown>) => child.stdin.write(JSON.stringify(m) + '\n');
     child.stdout.on('error', (err) => finish(err));
@@ -392,6 +403,8 @@ export interface QuotaIO {
   readClaude: () => Promise<ProviderQuota | null>;
   readCodex: () => Promise<ProviderQuota | null>;
   now: () => number;
+  /** Stops reads still in flight (the Codex app-server child). */
+  stop?: () => void;
 }
 
 const defaultQuotaIO: QuotaIO = {
@@ -402,6 +415,7 @@ const defaultQuotaIO: QuotaIO = {
     now: () => Date.now(),
   }),
   now: () => Date.now(),
+  stop: stopCodexAppServers,
 };
 
 /** Polls both sources and broadcasts `quotaStatus` when the figures change. */
@@ -452,5 +466,6 @@ export class QuotaPoller {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    this.io.stop?.();
   }
 }

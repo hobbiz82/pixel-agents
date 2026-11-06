@@ -165,6 +165,17 @@ describe('readCodexQuota / readClaudeQuota', () => {
 });
 
 describe('QuotaPoller', () => {
+  it('stop() also stops any quota read still in flight', () => {
+    let stopped = 0;
+    const poller = new QuotaPoller(() => undefined, {
+      readClaude: async () => null,
+      readCodex: async () => null,
+      now: () => 0,
+      stop: () => void stopped++,
+    });
+    poller.stop();
+    expect(stopped).toBe(1);
+  });
   it('broadcasts only when the quota changed, and keeps a snapshot for late clients', async () => {
     const sent: Record<string, unknown>[] = [];
     let codexPct = 7;
