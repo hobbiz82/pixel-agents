@@ -13,6 +13,8 @@ import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { PermissionCards } from './components/PermissionCards.js';
+import { QuotaPanel } from './components/QuotaPanel.js';
 import { SessionsModal } from './components/SessionsModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { TerminalDrawer } from './components/TerminalDrawer.js';
@@ -137,10 +139,24 @@ function App() {
     archiveNotice,
     inspections,
     startArchiveBatch,
+    quota,
+    heldPrompts,
+    assistSettings,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
+
+  // mptl fork (Đ3): the server holds permission prompts only while a tokened
+  // page is visible, so tell it whenever that changes.
+  useEffect(() => {
+    if (officeReadOnly) return;
+    const report = () =>
+      transport.send({ type: 'pageVisibility', visible: document.visibilityState === 'visible' });
+    report();
+    document.addEventListener('visibilitychange', report);
+    return () => document.removeEventListener('visibilitychange', report);
+  }, [officeReadOnly]);
 
   // mptl fork (Đ2): one room per project with live sessions, built in the
   // browser and never saved; the layout editor is off while it is up.
@@ -793,6 +809,15 @@ function App() {
           terminalAvailable={terminalAvailable}
           terminalUnavailableReason={terminalUnavailableReason}
           onOpenSessions={() => setIsSessionsOpen(true)}
+          quotaSlot={
+            <QuotaPanel
+              quota={quota}
+              readOnly={officeReadOnly}
+              onSetClaudeReader={(enabled) =>
+                transport.send({ type: 'setClaudeQuotaReader', enabled })
+              }
+            />
+          }
         />
       )}
 
@@ -958,6 +983,17 @@ function App() {
           setDeleteTargets(null);
         }}
       />
+      {!officeReadOnly && (
+        <PermissionCards
+          prompts={heldPrompts}
+          nameFor={(p) =>
+            p.agentId !== undefined ? sessionInfoFor(p.agentId, 0)?.name : undefined
+          }
+          onDecide={(requestId, decision) =>
+            transport.send({ type: 'decidePermission', requestId, decision })
+          }
+        />
+      )}
       {characterMenu && characterMenuRow && (
         <CharacterMenu
           row={characterMenuRow}
@@ -1088,6 +1124,23 @@ function App() {
         onImportLayout={handleImportLayout}
         autoRooms={autoRooms}
         onToggleAutoRooms={toggleAutoRooms}
+        approveFromPage={assistSettings.approveFromPage}
+        onToggleApproveFromPage={
+          officeReadOnly
+            ? undefined
+            : () =>
+                transport.send({
+                  type: 'setAssistSettings',
+                  approveFromPage: !assistSettings.approveFromPage,
+                })
+        }
+        notifyMac={assistSettings.notifyMac}
+        onToggleNotifyMac={
+          officeReadOnly
+            ? undefined
+            : () =>
+                transport.send({ type: 'setAssistSettings', notifyMac: !assistSettings.notifyMac })
+        }
       />
 
       {showMigrationNotice && (

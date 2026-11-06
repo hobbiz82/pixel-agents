@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import type { Directory } from '../hooks/useExtensionMessages.js';
 import { isBrowserRuntime } from '../runtime.js';
@@ -24,6 +24,8 @@ interface BottomToolbarProps {
   terminalUnavailableReason: string | null;
   /** mptl fork: opens the "Phiên" table of every session. */
   onOpenSessions?: () => void;
+  /** mptl fork (Đ3): the quota button + panel. */
+  quotaSlot?: ReactNode;
 }
 
 export function BottomToolbar({
@@ -38,6 +40,7 @@ export function BottomToolbar({
   terminalAvailable,
   terminalUnavailableReason,
   onOpenSessions,
+  quotaSlot,
 }: BottomToolbarProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const launchRef = useRef<HTMLDivElement>(null);
@@ -122,6 +125,7 @@ export function BottomToolbar({
           Phiên
         </Button>
       )}
+      {quotaSlot}
       {layoutDisabledReason ? (
         <Button
           variant="disabled"

@@ -2,6 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { HooksConsentRequest } from '../../../core/src/messages.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
+import {
+  type AssistSettings,
+  type HeldPrompt,
+  parseAssistSettings,
+  parsePermissionRequests,
+  parseQuotaStatus,
+  type QuotaView,
+} from '../office/assistView.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
@@ -172,6 +180,12 @@ interface ExtensionMessageState {
   inspections: Record<number, Inspection>;
   /** Call before sending a bulk archive: its results then show as one running count. */
   startArchiveBatch: (ids: number[]) => void;
+  /** mptl fork (Đ3): Claude + Codex usage limits. */
+  quota: QuotaView;
+  /** mptl fork (Đ3): permission prompts held for the page (tokened office only). */
+  heldPrompts: HeldPrompt[];
+  /** mptl fork (Đ3): approve-from-page / macOS notification settings. */
+  assistSettings: AssistSettings;
   // Terminal (standalone only; always false/empty under VS Code, which owns its
   // own terminals and never sends these messages)
   terminalAvailable: boolean;
@@ -242,6 +256,11 @@ export function useExtensionMessages(
   // Never sent under VS Code, so it stays false there.
   const [officeReadOnly, setOfficeReadOnly] = useState(false);
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const [quota, setQuota] = useState<QuotaView>({ claudeReader: 'none' });
+  const [heldPrompts, setHeldPrompts] = useState<HeldPrompt[]>([]);
+  const [assistSettings, setAssistSettings] = useState<AssistSettings>(() =>
+    parseAssistSettings({}),
+  );
   const [archiveNotice, setArchiveNotice] = useState<{
     ok: boolean;
     text: string;
@@ -323,6 +342,21 @@ export function useExtensionMessages(
 
       if (msg.type === 'officeAccess') {
         setOfficeReadOnly(msg.readOnly === true);
+        return;
+      }
+
+      if (msg.type === 'quotaStatus') {
+        setQuota(parseQuotaStatus(msg));
+        return;
+      }
+
+      if (msg.type === 'permissionRequests') {
+        setHeldPrompts(parsePermissionRequests(msg.requests));
+        return;
+      }
+
+      if (msg.type === 'assistSettings') {
+        setAssistSettings(parseAssistSettings(msg));
         return;
       }
 
@@ -1034,6 +1068,9 @@ export function useExtensionMessages(
     archiveNotice,
     inspections,
     startArchiveBatch,
+    quota,
+    heldPrompts,
+    assistSettings,
     terminalAvailable,
     terminalUnavailableReason,
     terminalAgentIds,
